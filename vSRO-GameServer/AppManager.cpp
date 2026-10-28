@@ -134,7 +134,7 @@ void AppManager::InitMobKillStats()
 
 	if (m_MobKillStats_Enabled)
 	{
-		printf(" * [MobKillStats] ENABLED | %u Mobs -> +%u %s (Cap: %u, LevelDiffCheck: %s)\r\n",
+		LogMobKill("[MobKillStats] ENABLED | %u Mobs -> +%u %s (Cap: %u, LevelDiffCheck: %s)",
 			m_MobKillStats_RequiredCount,
 			m_MobKillStats_RewardAmount,
 			m_MobKillStats_RewardType.c_str(),
@@ -143,7 +143,7 @@ void AppManager::InitMobKillStats()
 	}
 	else
 	{
-		printf(" * [MobKillStats] DISABLED\r\n");
+		LogMobKill("[MobKillStats] DISABLED");
 	}
 }
 void AppManager::InitDebugConsole()
@@ -173,11 +173,11 @@ void AppManager::InitHooks()
 		bool hook2 = replaceOffset(0x0049C7C1, addr_from_this(&AppManager::OnEntityKilledParty));
 		if (hook1 && hook2)
 		{
-			std::cout << "   - [MobKillStats] Solo and Party Kill Hooks Registered Successfully!" << std::endl;
+			LogMobKill("[MobKillStats] Solo and Party Kill Hooks Registered Successfully! (0x0049C75F & 0x0049C7C1)");
 		}
 		else
 		{
-			printf("   - [MobKillStats ERROR] Failed to register hooks! (Hook1: %d, Hook2: %d)\r\n", hook1, hook2);
+			LogMobKill("[MobKillStats ERROR] Failed to register hooks! (Hook1: %d, Hook2: %d)", hook1, hook2);
 		}
 	}
 
@@ -234,11 +234,52 @@ void __stdcall AppManager::OnEntityKilledParty(void* pAttacker, void* pDeadEntit
 	reinterpret_cast<void(__stdcall*)(void*, void*)>(0x0049F590)(pAttacker, pDeadEntity);
 }
 
+void AppManager::LogMobKill(const char* format, ...)
+{
+	static std::mutex s_LogMutex;
+	std::lock_guard<std::mutex> lock(s_LogMutex);
+
+	char buffer[2048];
+	va_list args;
+	va_start(args, format);
+	vsnprintf(buffer, sizeof(buffer), format, args);
+	va_end(args);
+
+	SYSTEMTIME st;
+	GetLocalTime(&st);
+	char timeStr[64];
+	sprintf_s(timeStr, "[%04d-%02d-%02d %02d:%02d:%02d.%03d]",
+		st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+
+	printf(" * %s %s\r\n", timeStr, buffer);
+
+	FILE* f = nullptr;
+	if (fopen_s(&f, "vSRO-MobKillStats.log", "a") == 0 && f)
+	{
+		fprintf(f, "%s %s\n", timeStr, buffer);
+		fflush(f);
+		fclose(f);
+	}
+}
+
 void AppManager::ProcessMobKillReward(void* pAttacker, void* pDeadEntity)
 {
 	if (!m_MobKillStats_Enabled)
 		return;
 
+	__try
+	{
+		ProcessMobKillRewardInternal(pAttacker, pDeadEntity);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		DWORD code = GetExceptionCode();
+		LogMobKill("[CRITICAL SEH EXCEPTION] Hardware/Access violation prevented! ExceptionCode: 0x%08X", code);
+	}
+}
+
+void AppManager::ProcessMobKillRewardInternal(void* pAttacker, void* pDeadEntity)
+{
 	try
 	{
 		if (!pAttacker || !pDeadEntity)
@@ -262,7 +303,7 @@ void AppManager::ProcessMobKillReward(void* pAttacker, void* pDeadEntity)
 		CInstancePC* pInstance = pPlayer->GetInstance();
 		if (!pInstance)
 		{
-			printf(" * [MobKillStats ERROR] Player instance pointer is null!\r\n");
+			LogMobKill("[MobKillStats ERROR] Player instance pointer is null!");
 			return;
 		}
 
@@ -291,7 +332,7 @@ void AppManager::ProcessMobKillReward(void* pAttacker, void* pDeadEntity)
 		{
 			if (progress.bonusGranted >= m_MobKillStats_MaxRewardCap)
 			{
-				printf(" * [MobKillStats Info] Player '%s' reached max bonus cap (%u/%u).\r\n",
+				LogMobKill("[MobKillStats Info] Player '%s' reached max bonus cap (%u/%u).",
 					charName, progress.bonusGranted, m_MobKillStats_MaxRewardCap);
 				progress.currentKills = 0;
 				return;
@@ -310,9 +351,7 @@ void AppManager::ProcessMobKillReward(void* pAttacker, void* pDeadEntity)
 			// Synchronize to client "C" window
 			pPlayer->SendStatUpdate();
 
-			printf(" * [MobKillStats SUCCESS] Milestone Reached! Player: '%s' (ID: %u)\r\n"
-				   "   -> Rewarded: +%u %s | Current Stats: [STR: %u | INT: %u | StatPoints: %u]\r\n"
-				   "   -> Total Bonus: %u / %u | Client 0x303D Dispatched!\r\n",
+			LogMobKill("[MobKillStats SUCCESS] Milestone Reached! Player: '%s' (ID: %u) -> Rewarded: +%u %s | Current Stats: [STR: %u | INT: %u | StatPoints: %u] | Bonus: %u/%u | Client 0x303D Dispatched!",
 				charName, charId,
 				m_MobKillStats_RewardAmount, m_MobKillStats_RewardType.c_str(),
 				pInstance->Strength, pInstance->Intelect, pInstance->RemainStatPoint,
@@ -321,11 +360,11 @@ void AppManager::ProcessMobKillReward(void* pAttacker, void* pDeadEntity)
 	}
 	catch (const std::exception& ex)
 	{
-		printf(" * [MobKillStats EXCEPTION] Exception in ProcessMobKillReward: %s\r\n", ex.what());
+		LogMobKill("[MobKillStats EXCEPTION] Exception in ProcessMobKillRewardInternal: %s", ex.what());
 	}
 	catch (...)
 	{
-		printf(" * [MobKillStats CRITICAL] Unknown exception in ProcessMobKillReward!\r\n");
+		LogMobKill("[MobKillStats CRITICAL] Unknown exception in ProcessMobKillRewardInternal!");
 	}
 }
 

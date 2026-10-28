@@ -61,7 +61,11 @@ public: // Public Methods
 	static void __stdcall OnEntityKilled(void* pAttacker, void* pDeadEntity);
 	static void __stdcall OnEntityKilledParty(void* pAttacker, void* pDeadEntity);
 	static void ProcessMobKillReward(void* pAttacker, void* pDeadEntity);
+	// Thread-safe logger writing to console and vSRO-MobKillStats.log
+	static void LogMobKill(const char* format, ...);
 private: // Private Helpers
+	// Internal worker for mob kill reward logic (called under SEH guard)
+	static void ProcessMobKillRewardInternal(void* pAttacker, void* pDeadEntity);
 	// Initialize the default config file if doesn't exists
 	static void InitConfigFile();
 	// Starts console if required
