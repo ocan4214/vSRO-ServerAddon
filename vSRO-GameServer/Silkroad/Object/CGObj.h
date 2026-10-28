@@ -9,6 +9,8 @@ protected: /// Protected Members
 	// Unique Identifier
 	uint32_t m_UniqueId;
 public: /// Public Properties
+	// Gets the virtual function table address
+	uint32_t GetVFTable() { return m_ptrVTable; }
 	// Gets the game world id as reference
 	void GetGameWorldId(uint32_t* OutGameWorldId);
 	// Get unique identifier from this object

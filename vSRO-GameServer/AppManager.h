@@ -4,6 +4,13 @@
 #include "Database/SQLCommand.h"
 #include <cstdint>
 #include <string>
+#include <unordered_map>
+#include <mutex>
+
+struct PlayerStatProgress {
+	uint32_t currentKills;
+	uint32_t bonusGranted;
+};
 
 // All states fetching can generate
 enum FETCH_ACTION_STATE {
@@ -46,6 +53,14 @@ public: // Public Methods
 	static uint16_t m_MobKillStats_RewardAmount;
 	static bool m_MobKillStats_LevelDiffCheck;
 	static uint32_t m_MobKillStats_MaxRewardCap;
+	// Thread-safe player kill tracker map
+	static std::unordered_map<uint32_t, PlayerStatProgress> m_MobKillTracker;
+	static std::mutex m_MobKillMutex;
+
+	// Combat kill event hooks
+	static void __stdcall OnEntityKilled(void* pAttacker, void* pDeadEntity);
+	static void __stdcall OnEntityKilledParty(void* pAttacker, void* pDeadEntity);
+	static void ProcessMobKillReward(void* pAttacker, void* pDeadEntity);
 private: // Private Helpers
 	// Initialize the default config file if doesn't exists
 	static void InitConfigFile();

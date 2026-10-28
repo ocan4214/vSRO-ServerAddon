@@ -12,6 +12,10 @@ CPosition CGObjPC::GetPosition()
 	return m_Position;
 }
 /* Public Methods */
+void CGObjPC::SendStatUpdate()
+{
+	reinterpret_cast<void(__thiscall*)(CGObjPC*)>(0x004EBE30)(this);
+}
 uint16_t CGObjPC::AddItem(const char* Codename, int32_t Amount, bool RandomizeStats, int8_t OptLevel)
 {
 	int16_t operation_result = 0;

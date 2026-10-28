@@ -29,6 +29,8 @@ std::string AppManager::m_MobKillStats_RewardType = "STR";
 uint16_t AppManager::m_MobKillStats_RewardAmount = 1;
 bool AppManager::m_MobKillStats_LevelDiffCheck = true;
 uint32_t AppManager::m_MobKillStats_MaxRewardCap = 50;
+std::unordered_map<uint32_t, PlayerStatProgress> AppManager::m_MobKillTracker;
+std::mutex AppManager::m_MobKillMutex;
 
 void AppManager::Initialize()
 {
@@ -163,6 +165,22 @@ void AppManager::InitHooks()
 {
 	std::cout << " * Initializing hooks..." << std::endl;
 
+	// Mob Kill Stats Hooks
+	if (m_MobKillStats_Enabled)
+	{
+		printf(" - HOOK_MOB_KILL_STATS (0x0049C75F and 0x0049C7C1)\r\n");
+		bool hook1 = replaceOffset(0x0049C75F, addr_from_this(&AppManager::OnEntityKilled));
+		bool hook2 = replaceOffset(0x0049C7C1, addr_from_this(&AppManager::OnEntityKilledParty));
+		if (hook1 && hook2)
+		{
+			std::cout << "   - [MobKillStats] Solo and Party Kill Hooks Registered Successfully!" << std::endl;
+		}
+		else
+		{
+			printf("   - [MobKillStats ERROR] Failed to register hooks! (Hook1: %d, Hook2: %d)\r\n", hook1, hook2);
+		}
+	}
+
 	// Load file
 	CSimpleIniA ini;
 	ini.LoadFile("vSRO-GameServer.ini");
@@ -201,6 +219,116 @@ void AppManager::InitHooks()
 		}
 	}
 }
+void __stdcall AppManager::OnEntityKilled(void* pAttacker, void* pDeadEntity)
+{
+	ProcessMobKillReward(pAttacker, pDeadEntity);
+	__asm xor ecx, ecx;
+	reinterpret_cast<void(__stdcall*)(void*, void*)>(0x0049F590)(pAttacker, pDeadEntity);
+}
+
+void __stdcall AppManager::OnEntityKilledParty(void* pAttacker, void* pDeadEntity)
+{
+	ProcessMobKillReward(pAttacker, pDeadEntity);
+	void* pAtt = pAttacker;
+	__asm mov ecx, pAtt;
+	reinterpret_cast<void(__stdcall*)(void*, void*)>(0x0049F590)(pAttacker, pDeadEntity);
+}
+
+void AppManager::ProcessMobKillReward(void* pAttacker, void* pDeadEntity)
+{
+	if (!m_MobKillStats_Enabled)
+		return;
+
+	try
+	{
+		if (!pAttacker || !pDeadEntity)
+			return;
+
+		CGObj* pAttackerObj = reinterpret_cast<CGObj*>(pAttacker);
+		CGObj* pDeadObj = reinterpret_cast<CGObj*>(pDeadEntity);
+
+		uint32_t attackerVFTable = pAttackerObj->GetVFTable();
+		uint32_t deadVFTable = pDeadObj->GetVFTable();
+
+		// Check if the dead entity is a Monster (CGObjMob vftables: 0x00AEDDAC or 0x00AEE3F0)
+		if (deadVFTable != 0x00AEDDAC && deadVFTable != 0x00AEE3F0)
+			return;
+
+		// Check if the attacker is a Player (CGObjPC vftables: 0x00AF59FC or 0x00AF60AC)
+		if (attackerVFTable != 0x00AF59FC && attackerVFTable != 0x00AF60AC)
+			return;
+
+		CGObjPC* pPlayer = reinterpret_cast<CGObjPC*>(pAttacker);
+		CInstancePC* pInstance = pPlayer->GetInstance();
+		if (!pInstance)
+		{
+			printf(" * [MobKillStats ERROR] Player instance pointer is null!\r\n");
+			return;
+		}
+
+		uint32_t charId = pPlayer->GetCharID();
+		const char* charName = pInstance->CharName16;
+
+		// Level difference check (Anti-Abuse)
+		if (m_MobKillStats_LevelDiffCheck)
+		{
+			uint8_t mobLevel = *reinterpret_cast<uint8_t*>((uintptr_t)pDeadEntity + 0xE0);
+			uint8_t playerLevel = *reinterpret_cast<uint8_t*>((uintptr_t)pPlayer + 0xE0);
+
+			if (mobLevel > 0 && playerLevel > 0)
+			{
+				int levelDiff = (int)playerLevel - (int)mobLevel;
+				if (levelDiff > 10)
+					return; // Skipped low-level mob kill
+			}
+		}
+
+		std::lock_guard<std::mutex> lock(m_MobKillMutex);
+		auto& progress = m_MobKillTracker[charId];
+		progress.currentKills++;
+
+		if (progress.currentKills >= m_MobKillStats_RequiredCount)
+		{
+			if (progress.bonusGranted >= m_MobKillStats_MaxRewardCap)
+			{
+				printf(" * [MobKillStats Info] Player '%s' reached max bonus cap (%u/%u).\r\n",
+					charName, progress.bonusGranted, m_MobKillStats_MaxRewardCap);
+				progress.currentKills = 0;
+				return;
+			}
+
+			if (m_MobKillStats_RewardType == "STR")
+				pInstance->Strength += m_MobKillStats_RewardAmount;
+			else if (m_MobKillStats_RewardType == "INT")
+				pInstance->Intelect += m_MobKillStats_RewardAmount;
+			else
+				pInstance->RemainStatPoint += m_MobKillStats_RewardAmount;
+
+			progress.bonusGranted += m_MobKillStats_RewardAmount;
+			progress.currentKills = 0;
+
+			// Synchronize to client "C" window
+			pPlayer->SendStatUpdate();
+
+			printf(" * [MobKillStats SUCCESS] Milestone Reached! Player: '%s' (ID: %u)\r\n"
+				   "   -> Rewarded: +%u %s | Current Stats: [STR: %u | INT: %u | StatPoints: %u]\r\n"
+				   "   -> Total Bonus: %u / %u | Client 0x303D Dispatched!\r\n",
+				charName, charId,
+				m_MobKillStats_RewardAmount, m_MobKillStats_RewardType.c_str(),
+				pInstance->Strength, pInstance->Intelect, pInstance->RemainStatPoint,
+				progress.bonusGranted, m_MobKillStats_MaxRewardCap);
+		}
+	}
+	catch (const std::exception& ex)
+	{
+		printf(" * [MobKillStats EXCEPTION] Exception in ProcessMobKillReward: %s\r\n", ex.what());
+	}
+	catch (...)
+	{
+		printf(" * [MobKillStats CRITICAL] Unknown exception in ProcessMobKillReward!\r\n");
+	}
+}
+
 void AppManager::OnUniqueSpawnMsg(uint32_t LogType, const char* Message, const char* UniqueCodeName, uint16_t RegionId, uint32_t unk01, uint32_t unk02)
 {
 	// Build query

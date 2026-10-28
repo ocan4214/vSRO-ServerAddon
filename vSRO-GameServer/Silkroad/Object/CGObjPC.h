@@ -16,7 +16,11 @@ public: /// Public Properties
 	uint32_t GetCharID();
 	// Gets the current position
 	CPosition GetPosition();
+	// Gets the character instance pointer
+	CInstancePC* GetInstance() { return m_CInstancePC; }
 public: /// Public Methods
+	// Dispatches 0x303D stat update packet to client
+	void SendStatUpdate();
 	// Add item to inventory. Return error code
 	uint16_t AddItem(const char* Codename, int32_t Count, bool RandomizeStats, int8_t OptLevel);
 	// Update the gold this player has
