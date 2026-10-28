@@ -39,6 +39,13 @@ private: // Private members
 public: // Public Methods
 	// Initialize manager
 	static void Initialize();
+	// Mob Kill Stats Config
+	static bool m_MobKillStats_Enabled;
+	static uint32_t m_MobKillStats_RequiredCount;
+	static std::string m_MobKillStats_RewardType;
+	static uint16_t m_MobKillStats_RewardAmount;
+	static bool m_MobKillStats_LevelDiffCheck;
+	static uint32_t m_MobKillStats_MaxRewardCap;
 private: // Private Helpers
 	// Initialize the default config file if doesn't exists
 	static void InitConfigFile();
@@ -46,6 +53,8 @@ private: // Private Helpers
 	static void InitDebugConsole();
 	// Set all offsets values
 	static void InitPatchValues();
+	// Initialize Mob Kill Stats configuration
+	static void InitMobKillStats();
 	// Initialize all hooks required
 	static void InitHooks();
 	// Event handler for unique spawn

@@ -1,8 +1,15 @@
 # Visual Studio cache
 .vs/
+*.user
 
 # Auto generated files
-Release/*
-vSRO-GameServer/Release/*
-vSRO-ShardManager/Release/*
-vSRO-ClientPatch/Release/*
+Release/
+Debug/
+x64/
+vSRO-GameServer/Release/
+vSRO-GameServer/Debug/
+vSRO-GameServer/vSRO-GameServer/
+vSRO-ShardManager/Release/
+vSRO-ShardManager/Debug/
+vSRO-ClientPatch/Release/
+vSRO-ClientPatch/Debug/

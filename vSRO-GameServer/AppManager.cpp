@@ -23,6 +23,12 @@ bool AppManager::m_IsInitialized;
 DatabaseLink AppManager::m_dbLink, AppManager::m_dbLinkHelper, AppManager::m_dbUniqueLog;
 bool AppManager::m_IsRunningDatabaseFetch;
 std::string AppManager::m_CTF_ITEM_WINNING_REWARD, AppManager::m_CTF_ITEM_KILLING_REWARD, AppManager::m_BA_ITEM_REWARD;
+bool AppManager::m_MobKillStats_Enabled = false;
+uint32_t AppManager::m_MobKillStats_RequiredCount = 100;
+std::string AppManager::m_MobKillStats_RewardType = "STR";
+uint16_t AppManager::m_MobKillStats_RewardAmount = 1;
+bool AppManager::m_MobKillStats_LevelDiffCheck = true;
+uint32_t AppManager::m_MobKillStats_MaxRewardCap = 50;
 
 void AppManager::Initialize()
 {
@@ -32,6 +38,7 @@ void AppManager::Initialize()
 		InitConfigFile();
 		InitDebugConsole();
 		InitPatchValues();
+		InitMobKillStats();
 		InitHooks();
 		InitDatabaseFetch();
 	}
@@ -98,10 +105,43 @@ void AppManager::InitConfigFile()
 		ini.SetBoolValue("Fix", "EXCHANGE_ATTACK_CANCEL", true, "; Remove attack cancel when player exchanges");
 		ini.SetBoolValue("Fix", "EXPLOIT_INVISIBLE_INVINCIBLE", true, "; Cancel exploit sent from client (0x70A7)");
 		ini.SetBoolValue("Fix", "GUILD_POINTS", true, "; Prevents negative values on guild points");
+		// Mob Kill Stats
+		ini.SetBoolValue("MobKillStats", "ENABLED", true, "; Enable mob kill stat reward system");
+		ini.SetLongValue("MobKillStats", "MOBS_PER_REWARD", 100, "; Monsters required to get reward");
+		ini.SetValue("MobKillStats", "REWARD_TYPE", "STR", "; Reward type: STR, INT, or STATPOINT");
+		ini.SetLongValue("MobKillStats", "REWARD_AMOUNT", 1, "; Stat points awarded per milestone");
+		ini.SetBoolValue("MobKillStats", "LEVEL_DIFF_CHECK", true, "; Only count mobs within player level range (+- 10)");
+		ini.SetLongValue("MobKillStats", "MAX_REWARD_CAP", 50, "; Maximum total bonus stats a player can receive");
 		// App
 		ini.SetBoolValue("App", "DEBUG_CONSOLE", true, "; Attach debug console");
 		// Save it
 		ini.SaveFile("vSRO-GameServer.ini");
+	}
+}
+void AppManager::InitMobKillStats()
+{
+	CSimpleIniA ini;
+	ini.LoadFile("vSRO-GameServer.ini");
+
+	m_MobKillStats_Enabled = ini.GetBoolValue("MobKillStats", "ENABLED", true);
+	m_MobKillStats_RequiredCount = (uint32_t)ini.GetLongValue("MobKillStats", "MOBS_PER_REWARD", 100);
+	m_MobKillStats_RewardType = ini.GetValue("MobKillStats", "REWARD_TYPE", "STR");
+	m_MobKillStats_RewardAmount = (uint16_t)ini.GetLongValue("MobKillStats", "REWARD_AMOUNT", 1);
+	m_MobKillStats_LevelDiffCheck = ini.GetBoolValue("MobKillStats", "LEVEL_DIFF_CHECK", true);
+	m_MobKillStats_MaxRewardCap = (uint32_t)ini.GetLongValue("MobKillStats", "MAX_REWARD_CAP", 50);
+
+	if (m_MobKillStats_Enabled)
+	{
+		printf(" * [MobKillStats] ENABLED | %u Mobs -> +%u %s (Cap: %u, LevelDiffCheck: %s)\r\n",
+			m_MobKillStats_RequiredCount,
+			m_MobKillStats_RewardAmount,
+			m_MobKillStats_RewardType.c_str(),
+			m_MobKillStats_MaxRewardCap,
+			m_MobKillStats_LevelDiffCheck ? "ON" : "OFF");
+	}
+	else
+	{
+		printf(" * [MobKillStats] DISABLED\r\n");
 	}
 }
 void AppManager::InitDebugConsole()
