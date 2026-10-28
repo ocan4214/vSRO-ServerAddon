@@ -53,6 +53,9 @@ public: // Public Methods
 	static uint16_t m_MobKillStats_RewardAmount;
 	static bool m_MobKillStats_LevelDiffCheck;
 	static uint32_t m_MobKillStats_MaxRewardCap;
+	static bool m_MobKillStats_VerboseLog;
+	// Global crash filter creating MiniDump file
+	static LONG WINAPI CrashDumpFilter(EXCEPTION_POINTERS* pExceptionPointers);
 	// Thread-safe player kill tracker map
 	static std::unordered_map<uint32_t, PlayerStatProgress> m_MobKillTracker;
 	static std::mutex m_MobKillMutex;

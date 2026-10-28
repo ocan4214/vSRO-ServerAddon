@@ -2,6 +2,8 @@
 // Console stuffs
 #pragma warning(disable:4996) // _CRT_SECURE_NO_WARNINGS
 #include <Windows.h>
+#include <DbgHelp.h>
+#pragma comment(lib, "Dbghelp.lib")
 #include <iostream>
 // Thread signal
 #include <csignal>
@@ -29,6 +31,7 @@ std::string AppManager::m_MobKillStats_RewardType = "STR";
 uint16_t AppManager::m_MobKillStats_RewardAmount = 1;
 bool AppManager::m_MobKillStats_LevelDiffCheck = true;
 uint32_t AppManager::m_MobKillStats_MaxRewardCap = 50;
+bool AppManager::m_MobKillStats_VerboseLog = true;
 std::unordered_map<uint32_t, PlayerStatProgress> AppManager::m_MobKillTracker;
 std::mutex AppManager::m_MobKillMutex;
 
@@ -37,6 +40,7 @@ void AppManager::Initialize()
 	if (!m_IsInitialized)
 	{
 		m_IsInitialized = true;
+		SetUnhandledExceptionFilter(&AppManager::CrashDumpFilter);
 		InitConfigFile();
 		InitDebugConsole();
 		InitPatchValues();
@@ -114,6 +118,7 @@ void AppManager::InitConfigFile()
 		ini.SetLongValue("MobKillStats", "REWARD_AMOUNT", 1, "; Stat points awarded per milestone");
 		ini.SetBoolValue("MobKillStats", "LEVEL_DIFF_CHECK", true, "; Only count mobs within player level range (+- 10)");
 		ini.SetLongValue("MobKillStats", "MAX_REWARD_CAP", 50, "; Maximum total bonus stats a player can receive");
+		ini.SetBoolValue("MobKillStats", "VERBOSE_LOG", true, "; Output verbose progress log on every kill (1=ON, 0=OFF)");
 		// App
 		ini.SetBoolValue("App", "DEBUG_CONSOLE", true, "; Attach debug console");
 		// Save it
@@ -131,6 +136,7 @@ void AppManager::InitMobKillStats()
 	m_MobKillStats_RewardAmount = (uint16_t)ini.GetLongValue("MobKillStats", "REWARD_AMOUNT", 1);
 	m_MobKillStats_LevelDiffCheck = ini.GetBoolValue("MobKillStats", "LEVEL_DIFF_CHECK", true);
 	m_MobKillStats_MaxRewardCap = (uint32_t)ini.GetLongValue("MobKillStats", "MAX_REWARD_CAP", 50);
+	m_MobKillStats_VerboseLog = ini.GetBoolValue("MobKillStats", "VERBOSE_LOG", true);
 
 	if (m_MobKillStats_Enabled)
 	{
@@ -262,6 +268,34 @@ void AppManager::LogMobKill(const char* format, ...)
 	}
 }
 
+LONG WINAPI AppManager::CrashDumpFilter(EXCEPTION_POINTERS* pExceptionPointers)
+{
+	SYSTEMTIME st;
+	GetLocalTime(&st);
+	char dumpPath[MAX_PATH];
+	sprintf_s(dumpPath, "Crash_GameServer_%04d%02d%02d_%02d%02d%02d.dmp",
+		st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+
+	HANDLE hFile = CreateFileA(dumpPath, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (hFile != INVALID_HANDLE_VALUE)
+	{
+		MINIDUMP_EXCEPTION_INFORMATION mei;
+		mei.ThreadId = GetCurrentThreadId();
+		mei.ExceptionPointers = pExceptionPointers;
+		mei.ClientPointers = FALSE;
+
+		MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), hFile, MiniDumpWithFullMemoryInfo, &mei, NULL, NULL);
+		CloseHandle(hFile);
+	}
+
+	LogMobKill("[FATAL CRASH] Unhandled exception in GameServer! MiniDump written to %s. ExceptionCode: 0x%08X at 0x%p",
+		dumpPath,
+		pExceptionPointers->ExceptionRecord->ExceptionCode,
+		pExceptionPointers->ExceptionRecord->ExceptionAddress);
+
+	return EXCEPTION_CONTINUE_SEARCH;
+}
+
 void AppManager::ProcessMobKillReward(void* pAttacker, void* pDeadEntity)
 {
 	if (!m_MobKillStats_Enabled)
@@ -293,11 +327,19 @@ void AppManager::ProcessMobKillRewardInternal(void* pAttacker, void* pDeadEntity
 
 		// Check if the dead entity is a Monster (CGObjMob vftables: 0x00AEDDAC or 0x00AEE3F0)
 		if (deadVFTable != 0x00AEDDAC && deadVFTable != 0x00AEE3F0)
+		{
+			if (m_MobKillStats_VerboseLog)
+				LogMobKill("[MobKillStats Skip] Victim 0x%p is not a monster (VFTable: 0x%08X)", pDeadEntity, deadVFTable);
 			return;
+		}
 
 		// Check if the attacker is a Player (CGObjPC vftables: 0x00AF59FC or 0x00AF60AC)
 		if (attackerVFTable != 0x00AF59FC && attackerVFTable != 0x00AF60AC)
+		{
+			if (m_MobKillStats_VerboseLog)
+				LogMobKill("[MobKillStats Skip] Attacker 0x%p is not a player (VFTable: 0x%08X)", pAttacker, attackerVFTable);
 			return;
+		}
 
 		CGObjPC* pPlayer = reinterpret_cast<CGObjPC*>(pAttacker);
 		CInstancePC* pInstance = pPlayer->GetInstance();
@@ -320,13 +362,23 @@ void AppManager::ProcessMobKillRewardInternal(void* pAttacker, void* pDeadEntity
 			{
 				int levelDiff = (int)playerLevel - (int)mobLevel;
 				if (levelDiff > 10)
+				{
+					if (m_MobKillStats_VerboseLog)
+						LogMobKill("[MobKillStats Skip] Player '%s' (Lv %u) vs Mob (Lv %u) = Diff %d > 10", charName, playerLevel, mobLevel, levelDiff);
 					return; // Skipped low-level mob kill
+				}
 			}
 		}
 
 		std::lock_guard<std::mutex> lock(m_MobKillMutex);
 		auto& progress = m_MobKillTracker[charId];
 		progress.currentKills++;
+
+		if (m_MobKillStats_VerboseLog && progress.currentKills < m_MobKillStats_RequiredCount)
+		{
+			LogMobKill("[MobKillStats Progress] Player '%s' (ID: %u) killed monster. Progress: %u / %u",
+				charName, charId, progress.currentKills, m_MobKillStats_RequiredCount);
+		}
 
 		if (progress.currentKills >= m_MobKillStats_RequiredCount)
 		{
