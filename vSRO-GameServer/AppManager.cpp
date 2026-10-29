@@ -8,6 +8,7 @@
 // Thread signal
 #include <csignal>
 #include <sstream>
+#include <fstream>
 #include <exception>
 // Gameserver stuffs
 #include "Silkroad/CGObjManager.h"
@@ -24,7 +25,7 @@
 bool AppManager::m_IsInitialized;
 DatabaseLink AppManager::m_dbLink, AppManager::m_dbLinkHelper, AppManager::m_dbUniqueLog;
 bool AppManager::m_IsRunningDatabaseFetch;
-std::string AppManager::m_CTF_ITEM_WINNING_REWARD, AppManager::m_CTF_ITEM_KILLING_REWARD, AppManager::m_BA_ITEM_REWARD;
+std::string AppManager::m_CTF_ITEM_WINNING_REWARD, AppManager::m_CTF_ITEM_KILLING_REWARD, AppManager::m_BA_ITEM_REWARD, AppManager::m_SPOOF_IP;
 bool AppManager::m_MobKillStats_Enabled = false;
 uint32_t AppManager::m_MobKillStats_RequiredCount = 100;
 std::string AppManager::m_MobKillStats_RewardType = "STR";
@@ -65,6 +66,7 @@ void AppManager::InitConfigFile()
 		ini.SetValue("Sql", "DB_SHARD_FETCH_TABLE", "_ExeGameServer", "; Table name used to execute actions");
 		ini.SetValue("Sql", "DB_LOG", "SRO_VT_SHARDLOG", "; Name used for the specified silkroad database");
 		// Memory
+		ini.SetValue("Server", "SPOOF_IP", "auto", "; Certification IP override (auto = read from server.cfg, fixes Stud_PE header collision)");
 		ini.SetLongValue("Server", "LEVEL_MAX", 110, "; Maximum level that can be reached on server");
 		ini.SetLongValue("Server", "STALL_PRICE_LIMIT", 9999999999, "; Maximum price that can be stalled");
 		ini.SetLongValue("Server", "PARTY_LEVEL_MIN", 5, "; Minimum level to create a party group");
@@ -462,6 +464,79 @@ void AppManager::InitPatchValues()
 	double_t doubleValue;
 
 	// Server
+	// Fix Stud_PE 5th section header (0x00400288) overwriting _IPSpoofing.exe Certification IP
+	{
+		uint8_t pushOp1 = 0, pushOp2 = 0;
+		if (ReadMemoryValue<uint8_t>(0x009365B9, pushOp1) && ReadMemoryValue<uint8_t>(0x0093660D, pushOp2)
+			&& pushOp1 == 0x68 && pushOp2 == 0x68)
+		{
+			std::string configuredIp = ini.GetValue("Server", "SPOOF_IP", "auto");
+			if (configuredIp.empty() || _stricmp(configuredIp.c_str(), "auto") == 0)
+			{
+				configuredIp.clear();
+				std::ifstream cfg("server.cfg");
+				if (cfg.is_open())
+				{
+					std::string line;
+					bool inGameServerBlock = false;
+					int braceDepth = 0;
+					while (std::getline(cfg, line))
+					{
+						size_t commentPos = line.find("//");
+						if (commentPos != std::string::npos)
+							line = line.substr(0, commentPos);
+
+						if (!inGameServerBlock && braceDepth == 0)
+						{
+							size_t gsPos = line.find("SR_GameServer");
+							if (gsPos != std::string::npos)
+							{
+								inGameServerBlock = true;
+							}
+						}
+
+						for (char ch : line)
+						{
+							if (ch == '{') braceDepth++;
+							else if (ch == '}') braceDepth--;
+						}
+
+						if (inGameServerBlock)
+						{
+							size_t certPos = line.find("Certification");
+							if (certPos == std::string::npos)
+								certPos = line.find("certification");
+
+							if (certPos != std::string::npos)
+							{
+								size_t q1 = line.find('"', certPos);
+								size_t q2 = (q1 != std::string::npos) ? line.find('"', q1 + 1) : std::string::npos;
+								if (q1 != std::string::npos && q2 != std::string::npos && q2 > q1 + 1)
+								{
+									configuredIp = line.substr(q1 + 1, q2 - q1 - 1);
+									break;
+								}
+							}
+
+							if (braceDepth <= 0 && line.find('}') != std::string::npos)
+								inGameServerBlock = false;
+						}
+					}
+				}
+				if (configuredIp.empty() || configuredIp.size() >= 16)
+					configuredIp = "%d.%d.%d.%d";
+			}
+
+			if (!configuredIp.empty() && configuredIp.size() < 16)
+			{
+				m_SPOOF_IP = configuredIp;
+				WriteMemoryValue<uint32_t>(0x009365BA, (uint32_t)m_SPOOF_IP.c_str());
+				WriteMemoryValue<uint32_t>(0x0093660E, (uint32_t)m_SPOOF_IP.c_str());
+				printf(" - SERVER_SPOOF_IP -> (%s) [Fixed Stud_PE 0x00400288 collision]\r\n", m_SPOOF_IP.c_str());
+				LogMobKill("[Fix] Restored SR_GameServer Certification IP -> %s (0x009365BA & 0x0093660E)", m_SPOOF_IP.c_str());
+			}
+		}
+	}
 	if (ReadMemoryValue<uint8_t>(0x004E52C7 + 2, byteValue))
 	{
 		uint8_t newValue = ini.GetLongValue("Server", "LEVEL_MAX", 110);

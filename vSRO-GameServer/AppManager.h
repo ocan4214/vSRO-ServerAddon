@@ -43,6 +43,7 @@ private: // Private members
 	static std::string m_CTF_ITEM_WINNING_REWARD;
 	static std::string m_CTF_ITEM_KILLING_REWARD;
 	static std::string m_BA_ITEM_REWARD;
+	static std::string m_SPOOF_IP;
 public: // Public Methods
 	// Initialize manager
 	static void Initialize();
