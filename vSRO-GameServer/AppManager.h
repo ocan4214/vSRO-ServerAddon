@@ -46,6 +46,8 @@ private: // Private members
 public: // Public Methods
 	// Initialize manager
 	static void Initialize();
+	// Initialize the default config file if doesn't exists
+	static void InitConfigFile();
 	// Mob Kill Stats Config
 	static bool m_MobKillStats_Enabled;
 	static uint32_t m_MobKillStats_RequiredCount;
@@ -69,8 +71,6 @@ public: // Public Methods
 private: // Private Helpers
 	// Internal worker for mob kill reward logic (called under SEH guard)
 	static void ProcessMobKillRewardInternal(void* pAttacker, void* pDeadEntity);
-	// Initialize the default config file if doesn't exists
-	static void InitConfigFile();
 	// Starts console if required
 	static void InitDebugConsole();
 	// Set all offsets values
