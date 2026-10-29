@@ -90,6 +90,11 @@ int main()
     ini.SetBoolValue("MobKillStats", "LEVEL_DIFF_CHECK", false, "; Only count mobs within player level range (+- 10)");
     ini.SetLongValue("MobKillStats", "MAX_REWARD_CAP", 50, "; Maximum total bonus stats a player can receive");
     ini.SetBoolValue("MobKillStats", "VERBOSE_LOG", true, "; Output verbose progress log on every kill (1=ON, 0=OFF)");
+    ini.SetLongValue("MobKillStats", "MAX_SAFE_STAT_LIMIT", 32000, "; Safety clamp to prevent smallint (32767) DB & client overflow");
+    ini.SetBoolValue("MobKillStats", "SEND_CHAT_MESSAGE", true, "; Send in-game chat message upon milestone achievement");
+    ini.SetLongValue("MobKillStats", "CHAT_TYPE", 9, "; Chat type (9=PM/Pink Whisper, 2=Whisper, 1=General, 7=Notice)");
+    ini.SetValue("MobKillStats", "CHAT_SENDER_NAME", "[Server]", "; Sender name for the message");
+    ini.SetValue("MobKillStats", "CHAT_MESSAGE", "Tebrikler! %u canavar kestiniz ve +%u %s kazandiniz! (Bonus: %u/%u)", "; In-game message format template");
 
     // App
     ini.SetBoolValue("App", "DEBUG_CONSOLE", true, "; Attach debug console");

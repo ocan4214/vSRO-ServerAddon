@@ -57,6 +57,13 @@ public: // Public Methods
 	static bool m_MobKillStats_LevelDiffCheck;
 	static uint32_t m_MobKillStats_MaxRewardCap;
 	static bool m_MobKillStats_VerboseLog;
+	static uint16_t m_MobKillStats_MaxSafeStatLimit;
+	static bool m_MobKillStats_SendChatMessage;
+	static uint8_t m_MobKillStats_ChatType;
+	static std::string m_MobKillStats_SenderName;
+	static std::string m_MobKillStats_ChatMessage;
+	// Safe stat addition with clamping to prevent smallint (32767) overflow
+	static uint16_t SafeAddStat(uint16_t currentVal, uint16_t rewardAmount, uint16_t maxLimit, const char* statName, const char* charName);
 	// Global crash filter creating MiniDump file
 	static LONG WINAPI CrashDumpFilter(EXCEPTION_POINTERS* pExceptionPointers);
 	// Thread-safe player kill tracker map

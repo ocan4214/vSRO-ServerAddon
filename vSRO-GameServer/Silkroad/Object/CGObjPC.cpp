@@ -39,6 +39,59 @@ void CGObjPC::SendStuffUpdate(uint8_t updateType, bool showMessage)
 		pop esi
 	}
 }
+// Helper for Joymax PacketWrite (0x00404090)
+// Calling convention: ecx = pPacket, eax = data size, push pData, ret 4
+static void PacketWrite(void* packet, const void* data, size_t dataSize)
+{
+	__asm
+	{
+		push esi
+		push edi
+		mov ecx, packet
+		mov eax, dataSize
+		push data
+		mov edx, 0x00404090
+		call edx
+		pop edi
+		pop esi
+	}
+}
+
+void CGObjPC::SendChatMessage(uint8_t chatType, const char* senderName, const char* message)
+{
+	if (!senderName || !message)
+		return;
+
+	// 1. Allocate packet for opcode 0x3026 (SERVER_CHAT)
+	// vftable[158] is CGObjPC::AllocatePacket(uint16_t opcode) at 0x004E0830
+	void* pPacket = CallVirtual<void*(__thiscall*)(CGObjPC*, uint16_t)>(this, 158)(this, 0x3026);
+	if (!pPacket)
+		return;
+
+	// 2. Chat Type (1 byte)
+	PacketWrite(pPacket, &chatType, sizeof(uint8_t));
+
+	// 3. Sender Name (2-byte length + ASCII string)
+	uint16_t senderLen = static_cast<uint16_t>(strlen(senderName));
+	PacketWrite(pPacket, &senderLen, sizeof(uint16_t));
+	if (senderLen > 0)
+		PacketWrite(pPacket, senderName, senderLen);
+
+	// 4. Message Text (2-byte length + ASCII string)
+	uint16_t msgLen = static_cast<uint16_t>(strlen(message));
+	PacketWrite(pPacket, &msgLen, sizeof(uint16_t));
+	if (msgLen > 0)
+		PacketWrite(pPacket, message, msgLen);
+
+	// 5. Send packet to client
+	// vftable[159] is CGObjPC::SendPacket(void* pPacket) at 0x004E0860
+	CallVirtual<void(__thiscall*)(CGObjPC*, void*)>(this, 159)(this, pPacket);
+}
+void CGObjPC::SendWhisper(const char* senderName, const char* message)
+{
+	// 0x09: Joymax S->C Incoming Whisper / Private Message (displayed in pink in client chat)
+	SendChatMessage(0x09, senderName, message);
+}
 uint16_t CGObjPC::AddItem(const char* Codename, int32_t Amount, bool RandomizeStats, int8_t OptLevel)
 {
 	int16_t operation_result = 0;

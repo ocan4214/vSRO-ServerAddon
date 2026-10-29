@@ -23,6 +23,10 @@ public: /// Public Methods
 	void SendStatUpdate();
 	// Dispatches 0x304E packet to client (type 1=Gold, 2=SP, 3=RemainStatPoint, 4=Hwan)
 	void SendStuffUpdate(uint8_t updateType, bool showMessage = false);
+	// Dispatches 0x3026 chat message packet to client (type 9=Incoming Whisper/Pink, 2=PM, 1=General, 7=Notice)
+	void SendChatMessage(uint8_t chatType, const char* senderName, const char* message);
+	// Dispatches an incoming whisper packet (0x3026, Type 9) to client displayed in pink
+	void SendWhisper(const char* senderName, const char* message);
 	// Add item to inventory. Return error code
 	uint16_t AddItem(const char* Codename, int32_t Count, bool RandomizeStats, int8_t OptLevel);
 	// Update the gold this player has
