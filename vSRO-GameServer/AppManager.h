@@ -66,6 +66,7 @@ public: // Public Methods
 	// Combat kill event hooks
 	static void __stdcall OnEntityKilled(void* pAttacker, void* pDeadEntity);
 	static void __stdcall OnEntityKilledParty(void* pAttacker, void* pDeadEntity);
+	static void __stdcall OnUniversalKillRewardBridge(void* pAttacker, void* pVictim);
 	static void ProcessMobKillReward(void* pAttacker, void* pDeadEntity);
 	// Thread-safe logger writing to console and vSRO-MobKillStats.log
 	static void LogMobKill(const char* format, ...);

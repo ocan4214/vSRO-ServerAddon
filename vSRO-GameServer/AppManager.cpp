@@ -169,6 +169,56 @@ void AppManager::InitDebugConsole()
 		freopen("CONIN$", "r", stdin);
 	}
 }
+static bool placeHook6(uintptr_t hookAddr, void* targetFunc)
+{
+	DWORD dwProtect = 0;
+	if (!VirtualProtect((LPVOID)hookAddr, 6, PAGE_EXECUTE_READWRITE, &dwProtect))
+		return false;
+
+	uint8_t bytes[6];
+	bytes[0] = 0xE9; // JMP rel32
+	int32_t rel = (int32_t)((uintptr_t)targetFunc - (hookAddr + 5));
+	memcpy(&bytes[1], &rel, 4);
+	bytes[5] = 0x90; // NOP padding
+
+	memcpy((LPVOID)hookAddr, bytes, 6);
+	VirtualProtect((LPVOID)hookAddr, 6, dwProtect, &dwProtect);
+	FlushInstructionCache(GetCurrentProcess(), (LPCVOID)hookAddr, 6);
+	return true;
+}
+
+void __declspec(naked) Hook_OnUniversalKill()
+{
+	__asm
+	{
+		pushad
+		pushfd
+
+		// At entry of 0x004E3860:
+		// eax = pVictim
+		// [esp + 40] = pAttacker (after pushad 32 + pushfd 4 + return addr 4)
+		mov edx, [esp + 40]
+		push eax            // arg2: pVictim
+		push edx            // arg1: pAttacker
+		call AppManager::OnUniversalKillRewardBridge
+
+		popfd
+		popad
+
+		// Original 6 bytes overwritten at 0x004E3860:
+		// 004e3860: 55              push    ebp
+		// 004e3861: 8bec            mov     ebp,esp
+		// 004e3863: 83e4f8          and     esp,0FFFFFFF8h
+		push ebp
+		mov ebp, esp
+		and esp, 0FFFFFFF8h
+
+		// Jump back to 0x004E3866
+		mov edx, 0x004E3866
+		jmp edx
+	}
+}
+
 void AppManager::InitHooks()
 {
 	std::cout << " * Initializing hooks..." << std::endl;
@@ -176,12 +226,13 @@ void AppManager::InitHooks()
 	// Mob Kill Stats Hooks
 	if (m_MobKillStats_Enabled)
 	{
-		printf(" - HOOK_MOB_KILL_STATS (0x0049C75F and 0x0049C7C1)\r\n");
+		printf(" - HOOK_MOB_KILL_STATS (Universal 0x004E3860)\r\n");
+		bool hookUniversal = placeHook6(0x004E3860, Hook_OnUniversalKill);
 		bool hook1 = replaceOffset(0x0049C75F, addr_from_this(&AppManager::OnEntityKilled));
 		bool hook2 = replaceOffset(0x0049C7C1, addr_from_this(&AppManager::OnEntityKilledParty));
 		if (hook1 && hook2)
 		{
-			LogMobKill("[MobKillStats] Solo and Party Kill Hooks Registered Successfully! (0x0049C75F & 0x0049C7C1)");
+			LogMobKill("[MobKillStats] Universal Mob/Combat Kill Hook Registered Successfully! (0x004E3860, FW: 0x0049C75F & 0x0049C7C1)");
 		}
 		else
 		{
@@ -232,6 +283,11 @@ void __stdcall AppManager::OnEntityKilled(void* pAttacker, void* pDeadEntity)
 	ProcessMobKillReward(pAttacker, pDeadEntity);
 	__asm xor ecx, ecx;
 	reinterpret_cast<void(__stdcall*)(void*, void*)>(0x0049F590)(pAttacker, pDeadEntity);
+}
+
+void __stdcall AppManager::OnUniversalKillRewardBridge(void* pAttacker, void* pVictim)
+{
+	ProcessMobKillReward(pAttacker, pVictim);
 }
 
 void __stdcall AppManager::OnEntityKilledParty(void* pAttacker, void* pDeadEntity)
@@ -333,6 +389,21 @@ void AppManager::ProcessMobKillRewardInternal(void* pAttacker, void* pDeadEntity
 			if (m_MobKillStats_VerboseLog)
 				LogMobKill("[MobKillStats Skip] Victim 0x%p is not a monster (VFTable: 0x%08X)", pDeadEntity, deadVFTable);
 			return;
+		}
+
+		// If attacker is not a player directly, check if it's a pet/summon owned by a player
+		if (attackerVFTable != 0x00AF59FC && attackerVFTable != 0x00AF60AC)
+		{
+			void* pOwner = *reinterpret_cast<void**>((uintptr_t)pAttacker + 0x14C);
+			if (pOwner)
+			{
+				uint32_t ownerVFTable = *reinterpret_cast<uint32_t*>(pOwner);
+				if (ownerVFTable == 0x00AF59FC || ownerVFTable == 0x00AF60AC)
+				{
+					pAttacker = pOwner;
+					attackerVFTable = ownerVFTable;
+				}
+			}
 		}
 
 		// Check if the attacker is a Player (CGObjPC vftables: 0x00AF59FC or 0x00AF60AC)
