@@ -187,34 +187,35 @@ static bool placeHook6(uintptr_t hookAddr, void* targetFunc)
 	return true;
 }
 
-void __declspec(naked) Hook_OnUniversalKill()
+void __declspec(naked) Hook_OnCharDie()
 {
 	__asm
 	{
 		pushad
 		pushfd
 
-		// At entry of 0x004E3860:
-		// eax = pVictim
-		// [esp + 40] = pAttacker (after pushad 32 + pushfd 4 + return addr 4)
+		// At entry of 0x004C3F60 (CGObjChar::OnDie):
+		// ecx = pDeadEntity (this)
+		// [esp + 4] = pAttacker (pKiller)
+		// After pushad (32 bytes) + pushfd (4 bytes) + return addr (4 bytes) = 40 bytes:
 		mov edx, [esp + 40]
-		push eax            // arg2: pVictim
-		push edx            // arg1: pAttacker
+		push ecx            // arg2: pVictim (dead mob/entity)
+		push edx            // arg1: pAttacker (killer PC/pet)
 		call AppManager::OnUniversalKillRewardBridge
 
 		popfd
 		popad
 
-		// Original 6 bytes overwritten at 0x004E3860:
-		// 004e3860: 55              push    ebp
-		// 004e3861: 8bec            mov     ebp,esp
-		// 004e3863: 83e4f8          and     esp,0FFFFFFF8h
+		// Original 6 bytes overwritten at 0x004C3F60:
+		// 004c3f60: 55              push    ebp
+		// 004c3f61: 8bec            mov     ebp,esp
+		// 004c3f63: 83e4f8          and     esp,0FFFFFFF8h
 		push ebp
 		mov ebp, esp
 		and esp, 0FFFFFFF8h
 
-		// Jump back to 0x004E3866
-		mov edx, 0x004E3866
+		// Jump back to 0x004C3F66
+		mov edx, 0x004C3F66
 		jmp edx
 	}
 }
@@ -226,17 +227,15 @@ void AppManager::InitHooks()
 	// Mob Kill Stats Hooks
 	if (m_MobKillStats_Enabled)
 	{
-		printf(" - HOOK_MOB_KILL_STATS (Universal 0x004E3860)\r\n");
-		bool hookUniversal = placeHook6(0x004E3860, Hook_OnUniversalKill);
-		bool hook1 = replaceOffset(0x0049C75F, addr_from_this(&AppManager::OnEntityKilled));
-		bool hook2 = replaceOffset(0x0049C7C1, addr_from_this(&AppManager::OnEntityKilledParty));
-		if (hook1 && hook2)
+		printf(" - HOOK_MOB_KILL_STATS (CGObjChar::OnDie 0x004C3F60)\r\n");
+		bool hookDeath = placeHook6(0x004C3F60, Hook_OnCharDie);
+		if (hookDeath)
 		{
-			LogMobKill("[MobKillStats] Universal Mob/Combat Kill Hook Registered Successfully! (0x004E3860, FW: 0x0049C75F & 0x0049C7C1)");
+			LogMobKill("[MobKillStats] Universal CGObjChar::OnDie Hook Registered Successfully! (0x004C3F60)");
 		}
 		else
 		{
-			LogMobKill("[MobKillStats ERROR] Failed to register hooks! (Hook1: %d, Hook2: %d)", hook1, hook2);
+			LogMobKill("[MobKillStats ERROR] Failed to register hook at 0x004C3F60!");
 		}
 	}
 
@@ -383,8 +382,12 @@ void AppManager::ProcessMobKillRewardInternal(void* pAttacker, void* pDeadEntity
 		uint32_t attackerVFTable = pAttackerObj->GetVFTable();
 		uint32_t deadVFTable = pDeadObj->GetVFTable();
 
-		// Check if the dead entity is a Monster (CGObjMob vftables: 0x00AEDDAC or 0x00AEE3F0)
-		if (deadVFTable != 0x00AEDDAC && deadVFTable != 0x00AEE3F0)
+		if (m_MobKillStats_VerboseLog)
+			LogMobKill("[MobKillStats Event] OnDie: Attacker=0x%p (VFT=0x%08X), Dead=0x%p (VFT=0x%08X)",
+				pAttacker, attackerVFTable, pDeadEntity, deadVFTable);
+
+		// Check if the dead entity is a Monster (CGObjMob vftables: 0x00AEDDAC, 0x00AEE3F0, or 0x00AEE3E4)
+		if (deadVFTable != 0x00AEDDAC && deadVFTable != 0x00AEE3F0 && deadVFTable != 0x00AEE3E4)
 		{
 			if (m_MobKillStats_VerboseLog)
 				LogMobKill("[MobKillStats Skip] Victim 0x%p is not a monster (VFTable: 0x%08X)", pDeadEntity, deadVFTable);
@@ -400,6 +403,8 @@ void AppManager::ProcessMobKillRewardInternal(void* pAttacker, void* pDeadEntity
 				uint32_t ownerVFTable = *reinterpret_cast<uint32_t*>(pOwner);
 				if (ownerVFTable == 0x00AF59FC || ownerVFTable == 0x00AF60AC)
 				{
+					if (m_MobKillStats_VerboseLog)
+						LogMobKill("[MobKillStats Pet] Attacker 0x%p resolved to owner 0x%p", pAttacker, pOwner);
 					pAttacker = pOwner;
 					attackerVFTable = ownerVFTable;
 				}
