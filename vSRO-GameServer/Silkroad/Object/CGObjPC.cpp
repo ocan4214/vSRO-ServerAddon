@@ -16,6 +16,29 @@ void CGObjPC::SendStatUpdate()
 {
 	reinterpret_cast<void(__thiscall*)(CGObjPC*)>(0x004EBE30)(this);
 }
+void CGObjPC::SendStuffUpdate(uint8_t updateType, bool showMessage)
+{
+	uint32_t argType = updateType;
+	uint32_t argMsg = showMessage ? 1 : 0;
+	void* pThis = this;
+	__asm
+	{
+		push esi
+		push edi
+		push ebx
+
+		mov edi, pThis
+		push argMsg
+		push argType
+
+		mov eax, 0x004E3FB0
+		call eax
+
+		pop ebx
+		pop edi
+		pop esi
+	}
+}
 uint16_t CGObjPC::AddItem(const char* Codename, int32_t Amount, bool RandomizeStats, int8_t OptLevel)
 {
 	int16_t operation_result = 0;

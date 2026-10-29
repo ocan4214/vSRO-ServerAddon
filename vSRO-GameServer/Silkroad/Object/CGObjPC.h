@@ -21,6 +21,8 @@ public: /// Public Properties
 public: /// Public Methods
 	// Dispatches 0x303D stat update packet to client
 	void SendStatUpdate();
+	// Dispatches 0x304E packet to client (type 1=Gold, 2=SP, 3=RemainStatPoint, 4=Hwan)
+	void SendStuffUpdate(uint8_t updateType, bool showMessage = false);
 	// Add item to inventory. Return error code
 	uint16_t AddItem(const char* Codename, int32_t Count, bool RandomizeStats, int8_t OptLevel);
 	// Update the gold this player has

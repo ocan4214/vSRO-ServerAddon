@@ -469,19 +469,29 @@ void AppManager::ProcessMobKillRewardInternal(void* pAttacker, void* pDeadEntity
 			}
 
 			if (m_MobKillStats_RewardType == "STR")
+			{
 				pInstance->Strength += m_MobKillStats_RewardAmount;
+				*reinterpret_cast<uint32_t*>((uintptr_t)pInstance + 0x08) |= 0x04; // DB dirty flag for STR/INT
+				pPlayer->SendStatUpdate(); // 0x303D combat stat sync
+			}
 			else if (m_MobKillStats_RewardType == "INT")
+			{
 				pInstance->Intelect += m_MobKillStats_RewardAmount;
+				*reinterpret_cast<uint32_t*>((uintptr_t)pInstance + 0x08) |= 0x04; // DB dirty flag for STR/INT
+				pPlayer->SendStatUpdate(); // 0x303D combat stat sync
+			}
 			else
+			{
 				pInstance->RemainStatPoint += m_MobKillStats_RewardAmount;
+				*reinterpret_cast<uint32_t*>((uintptr_t)pInstance + 0x08) |= 0x10; // DB dirty flag for StatPoint
+				pPlayer->SendStuffUpdate(3, false); // 0x304E real-time stat point sync to client
+				pPlayer->SendStatUpdate(); // 0x303D combat stat sync
+			}
 
 			progress.bonusGranted += m_MobKillStats_RewardAmount;
 			progress.currentKills = 0;
 
-			// Synchronize to client "C" window
-			pPlayer->SendStatUpdate();
-
-			LogMobKill("[MobKillStats SUCCESS] Milestone Reached! Player: '%s' (ID: %u) -> Rewarded: +%u %s | Current Stats: [STR: %u | INT: %u | StatPoints: %u] | Bonus: %u/%u | Client 0x303D Dispatched!",
+			LogMobKill("[MobKillStats SUCCESS] Milestone Reached! Player: '%s' (ID: %u) -> Rewarded: +%u %s | Current Stats: [STR: %u | INT: %u | StatPoints: %u] | Bonus: %u/%u | Client Sync Dispatched!",
 				charName, charId,
 				m_MobKillStats_RewardAmount, m_MobKillStats_RewardType.c_str(),
 				pInstance->Strength, pInstance->Intelect, pInstance->RemainStatPoint,

@@ -27,7 +27,8 @@ public:
 	uint16_t Intelect; //0x0076
 	uint64_t Gold; //0x0078
 	uint32_t RemainSkillPoint; //0x0080
-	uint32_t RemainStatPoint; //0x0084
+	uint16_t RemainStatPoint; //0x0084
+	uint16_t HwanLevel; //0x0086
 	char pad_0088[4]; //0x0088
 	// Current health points
 	uint32_t Health;
