@@ -13,3 +13,12 @@ vSRO-ShardManager/Release/
 vSRO-ShardManager/Debug/
 vSRO-ClientPatch/Release/
 vSRO-ClientPatch/Debug/
+
+# Hash-suffixed intermediate directories produced by some VS builds
+vSRO-Sha.*/
+
+# Resource cache files
+*.aps
+
+# Live configuration (contains credentials)
+/vSRO-GameServer.ini
