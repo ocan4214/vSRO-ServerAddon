@@ -728,7 +728,7 @@ void AppManager::InitPatchValues()
 			printf(" - SERVER_EXCHANGE_GOLD_LIMIT (%u) -> (%u)\r\n", uintValue, (uint32_t)newValue);
 			WriteMemoryValue<uint32_t>(0x00480F5E + 4, newValue);
 			WriteMemoryValue<uint32_t>(0x004D8F1A + 2, newValue);
-			WriteMemoryValue<uint32_t>(0x004D8F22 + 2, newValue);
+			WriteMemoryValue<uint32_t>(0x004D8F22 + 1, newValue); // Fixed offset: opcode BF (mov edi, imm32) is 1 byte (+1); +2 was clobbering following EB (jmp)
 			WriteMemoryValue<uint32_t>(0x004F7734 + 2, newValue);
 			WriteMemoryValue<uint32_t>(0x004F7746 + 4, newValue);
 		}
@@ -1444,7 +1444,7 @@ DWORD WINAPI AppManager::DatabaseFetchThread()
 				} break;
 				case 19: // Reduce HP/MP from player
 				{
-					SQLINTEGER cParam02, cParam03, cParam04;
+					SQLINTEGER cParam02, cParam03;
 					if (m_dbLink.sqlCmd.GetData(5, SQL_C_LONG, &cParam02, 0, NULL)
 						&& m_dbLink.sqlCmd.GetData(6, SQL_C_LONG, &cParam03, 0, NULL))
 					{
