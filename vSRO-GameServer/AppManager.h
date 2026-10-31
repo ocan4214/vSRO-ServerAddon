@@ -59,6 +59,7 @@ public: // Public Methods
 	static bool m_MobKillStats_VerboseLog;
 	static uint16_t m_MobKillStats_MaxSafeStatLimit;
 	static bool m_MobKillStats_SendChatMessage;
+	static bool m_MobKillStats_PartyShare;
 	static uint8_t m_MobKillStats_ChatType;
 	static std::string m_MobKillStats_SenderName;
 	static std::string m_MobKillStats_ChatMessage;
@@ -80,6 +81,10 @@ public: // Public Methods
 private: // Private Helpers
 	// Internal worker for mob kill reward logic (called under SEH guard)
 	static void ProcessMobKillRewardInternal(void* pAttacker, void* pDeadEntity);
+	// Phase 2: per-player kill credit + party sharing (pass 15 graph)
+	static void CreditMobKill(void* pPlayer, void* pInstance, uint32_t charId, const char* charName);
+	static void SharePartyKill(void* pPlayer, uint32_t killerCharId, uint8_t mobLevel);
+	static void* ResolveByCharID(uint32_t charId);
 	// Starts console if required
 	static void InitDebugConsole();
 	// Set all offsets values

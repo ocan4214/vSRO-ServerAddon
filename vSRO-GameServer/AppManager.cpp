@@ -35,6 +35,7 @@ uint32_t AppManager::m_MobKillStats_MaxRewardCap = 50;
 bool AppManager::m_MobKillStats_VerboseLog = true;
 uint16_t AppManager::m_MobKillStats_MaxSafeStatLimit = 32000;
 bool AppManager::m_MobKillStats_SendChatMessage = true;
+bool AppManager::m_MobKillStats_PartyShare = true;
 uint8_t AppManager::m_MobKillStats_ChatType = 9;
 std::string AppManager::m_MobKillStats_SenderName = "[Server]";
 std::string AppManager::m_MobKillStats_ChatMessage = "Tebrikler! %u canavar kestiniz ve +%u %s kazandiniz! (Bonus: %u/%u)";
@@ -124,6 +125,7 @@ void AppManager::InitConfigFile()
 		ini.SetValue("MobKillStats", "REWARD_TYPE", "STR", "; Reward type: STR, INT, or STATPOINT");
 		ini.SetLongValue("MobKillStats", "REWARD_AMOUNT", 1, "; Stat points awarded per milestone");
 		ini.SetBoolValue("MobKillStats", "LEVEL_DIFF_CHECK", true, "; Only count mobs within player level range (+- 10)");
+	ini.SetBoolValue("MobKillStats", "PARTY_SHARE", true, "; Also credit online party members for a party member's mob kill");
 		ini.SetLongValue("MobKillStats", "MAX_REWARD_CAP", 50, "; Maximum total bonus stats a player can receive");
 		ini.SetBoolValue("MobKillStats", "VERBOSE_LOG", true, "; Output verbose progress log on every kill (1=ON, 0=OFF)");
 		ini.SetLongValue("MobKillStats", "MAX_SAFE_STAT_LIMIT", 32000, "; Safety clamp to prevent smallint (32767) DB & client overflow");
@@ -147,6 +149,7 @@ void AppManager::InitMobKillStats()
 	m_MobKillStats_RewardType = ini.GetValue("MobKillStats", "REWARD_TYPE", "STR");
 	m_MobKillStats_RewardAmount = (uint16_t)ini.GetLongValue("MobKillStats", "REWARD_AMOUNT", 1);
 	m_MobKillStats_LevelDiffCheck = ini.GetBoolValue("MobKillStats", "LEVEL_DIFF_CHECK", true);
+	m_MobKillStats_PartyShare = ini.GetBoolValue("MobKillStats", "PARTY_SHARE", true);
 	m_MobKillStats_MaxRewardCap = (uint32_t)ini.GetLongValue("MobKillStats", "MAX_REWARD_CAP", 50);
 	m_MobKillStats_VerboseLog = ini.GetBoolValue("MobKillStats", "VERBOSE_LOG", true);
 	m_MobKillStats_MaxSafeStatLimit = (uint16_t)ini.GetLongValue("MobKillStats", "MAX_SAFE_STAT_LIMIT", 32000);
@@ -489,11 +492,12 @@ void AppManager::ProcessMobKillRewardInternal(void* pAttacker, void* pDeadEntity
 		uint32_t charId = pPlayer->GetCharID();
 		const char* charName = pInstance->CharName16;
 
+		// pass 14: mob level via the engine's own virtual (also used by the party share).
+		uint8_t mobLevel = GetEntityLevel(pDeadEntity);
+
 		// Level difference check (Anti-Abuse)
 		if (m_MobKillStats_LevelDiffCheck)
 		{
-			// pass 14: mob level via the engine's own virtual; player level from the instance.
-			uint8_t mobLevel = GetEntityLevel(pDeadEntity);
 			uint8_t playerLevel = *reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(pInstance) + 0x66);
 
 			if (mobLevel > 0 && playerLevel > 0)
@@ -508,94 +512,10 @@ void AppManager::ProcessMobKillRewardInternal(void* pAttacker, void* pDeadEntity
 			}
 		}
 
-		std::lock_guard<std::mutex> lock(m_MobKillMutex);
-		auto& progress = m_MobKillTracker[charId];
-		progress.currentKills++;
-
-		if (m_MobKillStats_VerboseLog && progress.currentKills < m_MobKillStats_RequiredCount)
-		{
-			LogMobKill("[MobKillStats Progress] Player '%s' (ID: %u) killed monster. Progress: %u / %u",
-				charName, charId, progress.currentKills, m_MobKillStats_RequiredCount);
-		}
-
-		if (progress.currentKills >= m_MobKillStats_RequiredCount)
-		{
-			if (progress.bonusGranted >= m_MobKillStats_MaxRewardCap)
-			{
-				LogMobKill("[MobKillStats Info] Player '%s' reached max bonus cap (%u/%u).",
-					charName, progress.bonusGranted, m_MobKillStats_MaxRewardCap);
-				progress.currentKills = 0;
-				return;
-			}
-
-			uint16_t awarded = 0;
-			if (m_MobKillStats_RewardType == "STR")
-			{
-				uint16_t prev = pInstance->Strength;
-				pInstance->Strength = SafeAddStat(prev, m_MobKillStats_RewardAmount, m_MobKillStats_MaxSafeStatLimit, "STR", charName);
-				awarded = pInstance->Strength - prev;
-				if (awarded > 0)
-				{
-					*reinterpret_cast<uint32_t*>((uintptr_t)pInstance + 0x08) |= 0x04; // DB dirty flag for STR/INT
-					pPlayer->SendStatUpdate(); // 0x303D combat stat sync
-				}
-			}
-			else if (m_MobKillStats_RewardType == "INT")
-			{
-				uint16_t prev = pInstance->Intelect;
-				pInstance->Intelect = SafeAddStat(prev, m_MobKillStats_RewardAmount, m_MobKillStats_MaxSafeStatLimit, "INT", charName);
-				awarded = pInstance->Intelect - prev;
-				if (awarded > 0)
-				{
-					*reinterpret_cast<uint32_t*>((uintptr_t)pInstance + 0x08) |= 0x04; // DB dirty flag for STR/INT
-					pPlayer->SendStatUpdate(); // 0x303D combat stat sync
-				}
-			}
-			else // STATPOINT
-			{
-				uint16_t prev = pInstance->RemainStatPoint;
-				pInstance->RemainStatPoint = SafeAddStat(prev, m_MobKillStats_RewardAmount, m_MobKillStats_MaxSafeStatLimit, "RemainStatPoint", charName);
-				awarded = pInstance->RemainStatPoint - prev;
-				if (awarded > 0)
-				{
-					*reinterpret_cast<uint32_t*>((uintptr_t)pInstance + 0x08) |= 0x10; // DB dirty flag for StatPoint
-					pPlayer->SendStuffUpdate(3, false); // 0x304E real-time stat point sync to client
-					pPlayer->SendStatUpdate(); // 0x303D combat stat sync
-				}
-			}
-
-			progress.bonusGranted += awarded;
-			progress.currentKills = 0;
-
-			// Send In-Game Chat Message (Pink Whisper)
-			if (m_MobKillStats_SendChatMessage && awarded > 0)
-			{
-				char msgBuffer[256];
-				if (strstr(m_MobKillStats_ChatMessage.c_str(), "%") != nullptr)
-				{
-					snprintf(msgBuffer, sizeof(msgBuffer), m_MobKillStats_ChatMessage.c_str(),
-						m_MobKillStats_RequiredCount,
-						awarded,
-						m_MobKillStats_RewardType.c_str(),
-						progress.bonusGranted,
-						m_MobKillStats_MaxRewardCap);
-				}
-				else
-				{
-					strncpy(msgBuffer, m_MobKillStats_ChatMessage.c_str(), sizeof(msgBuffer) - 1);
-					msgBuffer[sizeof(msgBuffer) - 1] = '\0';
-				}
-
-				pPlayer->SendChatMessage(m_MobKillStats_ChatType, m_MobKillStats_SenderName.c_str(), msgBuffer);
-			}
-
-			LogMobKill("[MobKillStats SUCCESS] Milestone Reached! Player: '%s' (ID: %u) -> Rewarded: +%u %s | Current Stats: [STR: %u | INT: %u | StatPoints: %u] | Bonus: %u/%u | Client Sync Dispatched! | Chat: %s",
-				charName, charId,
-				awarded, m_MobKillStats_RewardType.c_str(),
-				pInstance->Strength, pInstance->Intelect, pInstance->RemainStatPoint,
-				progress.bonusGranted, m_MobKillStats_MaxRewardCap,
-				(m_MobKillStats_SendChatMessage && awarded > 0) ? "SENT" : "OFF");
-		}
+		// Phase 2 (pass 15): credit the killer, then share the kill with the killer's party.
+		CreditMobKill(pPlayer, pInstance, charId, charName);
+		if (m_MobKillStats_PartyShare)
+			SharePartyKill(pAttacker, charId, mobLevel);
 	}
 	catch (const std::exception& ex)
 	{
@@ -604,6 +524,162 @@ void AppManager::ProcessMobKillRewardInternal(void* pAttacker, void* pDeadEntity
 	catch (...)
 	{
 		LogMobKill("[MobKillStats CRITICAL] Unknown exception in ProcessMobKillRewardInternal!");
+	}
+}
+
+
+void AppManager::CreditMobKill(void* pPlayerRaw, void* pInstanceRaw, uint32_t charId, const char* charName)
+{
+	CGObjPC* pPlayer = reinterpret_cast<CGObjPC*>(pPlayerRaw);
+	CInstancePC* pInstance = reinterpret_cast<CInstancePC*>(pInstanceRaw);
+	std::lock_guard<std::mutex> lock(m_MobKillMutex);
+	auto& progress = m_MobKillTracker[charId];
+	progress.currentKills++;
+
+	if (m_MobKillStats_VerboseLog && progress.currentKills < m_MobKillStats_RequiredCount)
+	{
+		LogMobKill("[MobKillStats Progress] Player '%s' (ID: %u) killed monster. Progress: %u / %u",
+			charName, charId, progress.currentKills, m_MobKillStats_RequiredCount);
+	}
+
+	if (progress.currentKills >= m_MobKillStats_RequiredCount)
+	{
+		if (progress.bonusGranted >= m_MobKillStats_MaxRewardCap)
+		{
+			LogMobKill("[MobKillStats Info] Player '%s' reached max bonus cap (%u/%u).",
+				charName, progress.bonusGranted, m_MobKillStats_MaxRewardCap);
+			progress.currentKills = 0;
+			return;
+		}
+
+		uint16_t awarded = 0;
+		if (m_MobKillStats_RewardType == "STR")
+		{
+			uint16_t prev = pInstance->Strength;
+			pInstance->Strength = SafeAddStat(prev, m_MobKillStats_RewardAmount, m_MobKillStats_MaxSafeStatLimit, "STR", charName);
+			awarded = pInstance->Strength - prev;
+			if (awarded > 0)
+			{
+				*reinterpret_cast<uint32_t*>((uintptr_t)pInstance + 0x08) |= 0x04; // DB dirty flag for STR/INT
+				pPlayer->SendStatUpdate(); // 0x303D combat stat sync
+			}
+		}
+		else if (m_MobKillStats_RewardType == "INT")
+		{
+			uint16_t prev = pInstance->Intelect;
+			pInstance->Intelect = SafeAddStat(prev, m_MobKillStats_RewardAmount, m_MobKillStats_MaxSafeStatLimit, "INT", charName);
+			awarded = pInstance->Intelect - prev;
+			if (awarded > 0)
+			{
+				*reinterpret_cast<uint32_t*>((uintptr_t)pInstance + 0x08) |= 0x04; // DB dirty flag for STR/INT
+				pPlayer->SendStatUpdate(); // 0x303D combat stat sync
+			}
+		}
+		else // STATPOINT
+		{
+			uint16_t prev = pInstance->RemainStatPoint;
+			pInstance->RemainStatPoint = SafeAddStat(prev, m_MobKillStats_RewardAmount, m_MobKillStats_MaxSafeStatLimit, "RemainStatPoint", charName);
+			awarded = pInstance->RemainStatPoint - prev;
+			if (awarded > 0)
+			{
+				*reinterpret_cast<uint32_t*>((uintptr_t)pInstance + 0x08) |= 0x10; // DB dirty flag for StatPoint
+				pPlayer->SendStuffUpdate(3, false); // 0x304E real-time stat point sync to client
+				pPlayer->SendStatUpdate(); // 0x303D combat stat sync
+			}
+		}
+
+		progress.bonusGranted += awarded;
+		progress.currentKills = 0;
+
+		// Send In-Game Chat Message (Pink Whisper)
+		if (m_MobKillStats_SendChatMessage && awarded > 0)
+		{
+			char msgBuffer[256];
+			if (strstr(m_MobKillStats_ChatMessage.c_str(), "%") != nullptr)
+			{
+				snprintf(msgBuffer, sizeof(msgBuffer), m_MobKillStats_ChatMessage.c_str(),
+					m_MobKillStats_RequiredCount,
+					awarded,
+					m_MobKillStats_RewardType.c_str(),
+					progress.bonusGranted,
+					m_MobKillStats_MaxRewardCap);
+			}
+			else
+			{
+				strncpy(msgBuffer, m_MobKillStats_ChatMessage.c_str(), sizeof(msgBuffer) - 1);
+				msgBuffer[sizeof(msgBuffer) - 1] = '\0';
+			}
+
+			pPlayer->SendChatMessage(m_MobKillStats_ChatType, m_MobKillStats_SenderName.c_str(), msgBuffer);
+		}
+
+		LogMobKill("[MobKillStats SUCCESS] Milestone Reached! Player: '%s' (ID: %u) -> Rewarded: +%u %s | Current Stats: [STR: %u | INT: %u | StatPoints: %u] | Bonus: %u/%u | Client Sync Dispatched! | Chat: %s",
+			charName, charId,
+			awarded, m_MobKillStats_RewardType.c_str(),
+			pInstance->Strength, pInstance->Intelect, pInstance->RemainStatPoint,
+			progress.bonusGranted, m_MobKillStats_MaxRewardCap,
+			(m_MobKillStats_SendChatMessage && awarded > 0) ? "SENT" : "OFF");
+	}
+}
+
+void* AppManager::ResolveByCharID(uint32_t charId)
+{
+	// pass 15: 0x00D6A8E8 is the server object; its hash map at +0x2290 maps CharID -> object.
+	// The engine's own helper asserts on a null global, so guard it here.
+	if (!charId || !*reinterpret_cast<void**>(0x00D6A8E8))
+		return nullptr;
+	typedef void* (__cdecl* ResolveFn)(int);
+	static ResolveFn resolve = reinterpret_cast<ResolveFn>(0x00485DC0);
+	return resolve(static_cast<int>(charId));
+}
+
+void AppManager::SharePartyKill(void* pPlayer, uint32_t killerCharId, uint8_t mobLevel)
+{
+	// pass 15: CGObjPC+0x1CB8 = CParty*; members are a circular list whose head is
+	// *(CParty**)(party+0x18); node = { next +0x00, prev +0x04, member +0x08 };
+	// the member record carries CharID at +0x04.
+	uintptr_t party = *reinterpret_cast<uintptr_t*>(reinterpret_cast<uintptr_t>(pPlayer) + 0x1CB8);
+	if (!party) return;
+
+	uintptr_t head = *reinterpret_cast<uintptr_t*>(party + 0x18);
+	uintptr_t node = head;
+
+	for (int guard = 0; node && guard < 32; guard++)
+	{
+		uintptr_t member = *reinterpret_cast<uintptr_t*>(node + 0x08);
+		if (member)
+		{
+			uint32_t memberCharId = *reinterpret_cast<uint32_t*>(member + 0x04);
+			if (memberCharId && memberCharId != killerCharId)
+			{
+				void* pOther = ResolveByCharID(memberCharId);
+				// Accept only a real CGObjPC (same vtable gate as the kill filter).
+				if (pOther && *reinterpret_cast<uint32_t*>(pOther) == 0x00AF59FC)
+				{
+					CInstancePC* pOtherInstance = reinterpret_cast<CInstancePC*>(
+						*reinterpret_cast<uintptr_t*>(reinterpret_cast<uintptr_t>(pOther) + 0x34));
+					if (pOtherInstance)
+					{
+						uint8_t otherLevel = *reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(pOtherInstance) + 0x66);
+						bool farAway = m_MobKillStats_LevelDiffCheck && otherLevel > 0 && mobLevel > 0 &&
+							((int)otherLevel - (int)mobLevel) > 10;
+						if (farAway)
+						{
+							if (m_MobKillStats_VerboseLog)
+								LogMobKill("[MobKillStats Party Skip] Member (Lv %u) vs Mob (Lv %u) = Diff %d > 10", otherLevel, mobLevel, (int)otherLevel - (int)mobLevel);
+						}
+						else
+						{
+							if (m_MobKillStats_VerboseLog)
+								LogMobKill("[MobKillStats Party] Credit '%s' (Lv %u) for a party kill", pOtherInstance->CharName16, otherLevel);
+							CreditMobKill(pOther, pOtherInstance, memberCharId, pOtherInstance->CharName16);
+						}
+					}
+				}
+			}
+		}
+		node = *reinterpret_cast<uintptr_t*>(node);
+		if (node == head) break;
 	}
 }
 
