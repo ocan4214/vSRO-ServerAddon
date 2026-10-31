@@ -407,6 +407,22 @@ void AppManager::ProcessMobKillReward(void* pAttacker, void* pDeadEntity)
 	}
 }
 
+// Map pass 14 (2026-10-31): real level reads. See re/SR_GameServer/20_OBJECTS.md.
+//   Player: CInstancePC+0x66 (canonical; twin +0x65). The level-up routine fcn.004e4d90
+//           writes both, so either works - +0x66 is the one the engine's Getter reads.
+//   Mob:    CGObj::GetLevel = IGObj vtable slot 73 (byte 0x124) of the real mob vtable
+//           0x00AEDDAC; it returns (u8) of the stat-table level entry [[obj+0x1F0]+0x1C].
+//           The old `+0xE0` byte was a dword-accessed vector field (DeathRegionPosX area).
+static uint8_t GetEntityLevel(void* pEntity)
+{
+	if (!pEntity) return 0;
+	uintptr_t vtbl = *reinterpret_cast<uintptr_t*>(pEntity);
+	if (!vtbl) return 0;
+	typedef uint8_t(__thiscall* GetLevelFn)(void*);
+	GetLevelFn fn = reinterpret_cast<GetLevelFn>(*reinterpret_cast<uintptr_t*>(vtbl + 0x124));
+	if (!fn) return 0;
+	return fn(pEntity);
+}
 void AppManager::ProcessMobKillRewardInternal(void* pAttacker, void* pDeadEntity)
 {
 	try
@@ -471,8 +487,9 @@ void AppManager::ProcessMobKillRewardInternal(void* pAttacker, void* pDeadEntity
 		// Level difference check (Anti-Abuse)
 		if (m_MobKillStats_LevelDiffCheck)
 		{
-			uint8_t mobLevel = *reinterpret_cast<uint8_t*>((uintptr_t)pDeadEntity + 0xE0);
-			uint8_t playerLevel = *reinterpret_cast<uint8_t*>((uintptr_t)pPlayer + 0xE0);
+			// pass 14: mob level via the engine's own virtual; player level from the instance.
+			uint8_t mobLevel = GetEntityLevel(pDeadEntity);
+			uint8_t playerLevel = *reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(pInstance) + 0x66);
 
 			if (mobLevel > 0 && playerLevel > 0)
 			{
