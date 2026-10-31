@@ -440,8 +440,11 @@ void AppManager::ProcessMobKillRewardInternal(void* pAttacker, void* pDeadEntity
 			LogMobKill("[MobKillStats Event] OnDie: Attacker=0x%p (VFT=0x%08X), Dead=0x%p (VFT=0x%08X)",
 				pAttacker, attackerVFTable, pDeadEntity, deadVFTable);
 
-		// Check if the dead entity is a Monster (CGObjMob vftables: 0x00AEDDAC, 0x00AEE3F0, or 0x00AEE3E4)
-		if (deadVFTable != 0x00AEDDAC && deadVFTable != 0x00AEE3F0 && deadVFTable != 0x00AEE3E4)
+		// Check if the dead entity is a Monster. Pass 14: the real (and only) CGObjMob vtable is
+		// 0x00AEDDAC - the death handler 0x004C1C80 sits at its byte 0x638, and no other vtable
+		// contains it. The former 0x00AEE3F0/0x00AEE3E4 values are interior addresses of that
+		// same array, so no object can ever hold them as its vfptr.
+		if (deadVFTable != 0x00AEDDAC)
 		{
 			if (m_MobKillStats_VerboseLog)
 				LogMobKill("[MobKillStats Skip] Victim 0x%p is not a monster (VFTable: 0x%08X)", pDeadEntity, deadVFTable);
@@ -449,13 +452,13 @@ void AppManager::ProcessMobKillRewardInternal(void* pAttacker, void* pDeadEntity
 		}
 
 		// If attacker is not a player directly, check if it's a pet/summon owned by a player
-		if (attackerVFTable != 0x00AF59FC && attackerVFTable != 0x00AF60AC)
+		if (attackerVFTable != 0x00AF59FC)
 		{
 			void* pOwner = *reinterpret_cast<void**>((uintptr_t)pAttacker + 0x14C);
 			if (pOwner)
 			{
 				uint32_t ownerVFTable = *reinterpret_cast<uint32_t*>(pOwner);
-				if (ownerVFTable == 0x00AF59FC || ownerVFTable == 0x00AF60AC)
+				if (ownerVFTable == 0x00AF59FC)
 				{
 					if (m_MobKillStats_VerboseLog)
 						LogMobKill("[MobKillStats Pet] Attacker 0x%p resolved to owner 0x%p", pAttacker, pOwner);
@@ -465,8 +468,10 @@ void AppManager::ProcessMobKillRewardInternal(void* pAttacker, void* pDeadEntity
 			}
 		}
 
-		// Check if the attacker is a Player (CGObjPC vftables: 0x00AF59FC or 0x00AF60AC)
-		if (attackerVFTable != 0x00AF59FC && attackerVFTable != 0x00AF60AC)
+		// Check if the attacker is a Player. Pass 14: 0x00AF59FC is the only CGObjPC vtable
+		// (it is the only one holding the level getter 0x004EF470 at slot 74); 0x00AF60AC was a
+		// string address, never a vfptr.
+		if (attackerVFTable != 0x00AF59FC)
 		{
 			if (m_MobKillStats_VerboseLog)
 				LogMobKill("[MobKillStats Skip] Attacker 0x%p is not a player (VFTable: 0x%08X)", pAttacker, attackerVFTable);
