@@ -23,9 +23,12 @@ public: /// Public Methods
 	void SendStatUpdate();
 	// Dispatches 0x304E packet to client (type 1=Gold, 2=SP, 3=RemainStatPoint, 4=Hwan)
 	void SendStuffUpdate(uint8_t updateType, bool showMessage = false);
-	// Dispatches 0x3026 chat message packet to client (type 9=Incoming Whisper/Pink, 2=PM, 1=General, 7=Notice)
+	// Dispatches 0x3026 chat message packet to client.
+	// Client ChatType enum: 1=All, 2=PM, 3=AllGM (pink), 4=Party, 5=Guild, 6=Global,
+	// 7=Notice (pink + center banner), 9=Stall. 9 is NOT a private message - it routes
+	// to the stall-chat module and crashed the client on 2026-11-01.
 	void SendChatMessage(uint8_t chatType, const char* senderName, const char* message);
-	// Dispatches an incoming whisper packet (0x3026, Type 9) to client displayed in pink
+	// Dispatches a private message (0x3026 type 2 = CHAT_PM) to the client
 	void SendWhisper(const char* senderName, const char* message);
 	// Add item to inventory. Return error code
 	uint16_t AddItem(const char* Codename, int32_t Count, bool RandomizeStats, int8_t OptLevel);

@@ -36,7 +36,7 @@ bool AppManager::m_MobKillStats_VerboseLog = true;
 uint16_t AppManager::m_MobKillStats_MaxSafeStatLimit = 32000;
 bool AppManager::m_MobKillStats_SendChatMessage = true;
 bool AppManager::m_MobKillStats_PartyShare = true;
-uint8_t AppManager::m_MobKillStats_ChatType = 9;
+uint8_t AppManager::m_MobKillStats_ChatType = 6;
 std::string AppManager::m_MobKillStats_SenderName = "[Server]";
 std::string AppManager::m_MobKillStats_ChatMessage = "Tebrikler! %u canavar kestiniz ve +%u %s kazandiniz! (Bonus: %u/%u)";
 std::unordered_map<uint32_t, PlayerStatProgress> AppManager::m_MobKillTracker;
@@ -130,7 +130,7 @@ void AppManager::InitConfigFile()
 		ini.SetBoolValue("MobKillStats", "VERBOSE_LOG", true, "; Output verbose progress log on every kill (1=ON, 0=OFF)");
 		ini.SetLongValue("MobKillStats", "MAX_SAFE_STAT_LIMIT", 32000, "; Safety clamp to prevent smallint (32767) DB & client overflow");
 		ini.SetBoolValue("MobKillStats", "SEND_CHAT_MESSAGE", true, "; Send in-game chat message upon milestone achievement");
-		ini.SetLongValue("MobKillStats", "CHAT_TYPE", 9, "; Chat type (9=PM/Pink Whisper, 2=Whisper, 1=General, 7=Notice)");
+		ini.SetLongValue("MobKillStats", "CHAT_TYPE", 6, "; Chat type: 6=Global (yellow, sender shown), 7=Notice (pink + centre banner), 3=AllGM (pink, sender shows '???'), 2=PM (may be dropped silently), 9=Stall (CRASHES the client - never use)");
 		ini.SetValue("MobKillStats", "CHAT_SENDER_NAME", "[Server]", "; Sender name for the message");
 		ini.SetValue("MobKillStats", "CHAT_MESSAGE", "Tebrikler! %u canavar kestiniz ve +%u %s kazandiniz! (Bonus: %u/%u)", "; In-game message format template");
 		// App
@@ -154,7 +154,12 @@ void AppManager::InitMobKillStats()
 	m_MobKillStats_VerboseLog = ini.GetBoolValue("MobKillStats", "VERBOSE_LOG", true);
 	m_MobKillStats_MaxSafeStatLimit = (uint16_t)ini.GetLongValue("MobKillStats", "MAX_SAFE_STAT_LIMIT", 32000);
 	m_MobKillStats_SendChatMessage = ini.GetBoolValue("MobKillStats", "SEND_CHAT_MESSAGE", true);
-	m_MobKillStats_ChatType = (uint8_t)ini.GetLongValue("MobKillStats", "CHAT_TYPE", 9);
+	// Client ChatType enum: 1 All, 2 PM, 3 AllGM (pink), 4 Party, 5 Guild, 6 Global,
+	// 7 Notice (pink + banner), 9 Stall. 9 is NOT a private message - it routes to the
+	// stall-chat module and crashed the client (2026-11-01).
+	// Default = 6 (Global): the client parses it as [sender][message], so the configured
+	// CHAT_SENDER_NAME is displayed, and it is never gated or re-routed.
+	m_MobKillStats_ChatType = (uint8_t)ini.GetLongValue("MobKillStats", "CHAT_TYPE", 6);
 	m_MobKillStats_SenderName = ini.GetValue("MobKillStats", "CHAT_SENDER_NAME", "[Server]");
 	m_MobKillStats_ChatMessage = ini.GetValue("MobKillStats", "CHAT_MESSAGE", "Tebrikler! %u canavar kestiniz ve +%u %s kazandiniz! (Bonus: %u/%u)");
 
