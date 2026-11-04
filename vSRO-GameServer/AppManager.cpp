@@ -41,6 +41,7 @@ std::string AppManager::m_MobKillStats_SenderName = "[Server]";
 std::string AppManager::m_MobKillStats_ChatMessage = "Tebrikler! %u canavar kestiniz ve +%u %s kazandiniz! (Bonus: %u/%u)";
 std::unordered_map<uint32_t, PlayerStatProgress> AppManager::m_MobKillTracker;
 std::mutex AppManager::m_MobKillMutex;
+bool AppManager::m_BulkStat_Enabled = true;
 
 void AppManager::Initialize()
 {
@@ -52,6 +53,7 @@ void AppManager::Initialize()
 		InitDebugConsole();
 		InitPatchValues();
 		InitMobKillStats();
+		InitBulkStat();
 		InitHooks();
 		InitDatabaseFetch();
 	}
@@ -133,6 +135,8 @@ void AppManager::InitConfigFile()
 		ini.SetLongValue("MobKillStats", "CHAT_TYPE", 6, "; Chat type: 6=Global (yellow, sender shown), 7=Notice (pink + centre banner), 3=AllGM (pink, sender shows '???'), 2=PM (may be dropped silently), 9=Stall (CRASHES the client - never use)");
 		ini.SetValue("MobKillStats", "CHAT_SENDER_NAME", "[Server]", "; Sender name for the message");
 		ini.SetValue("MobKillStats", "CHAT_MESSAGE", "Tebrikler! %u canavar kestiniz ve +%u %s kazandiniz! (Bonus: %u/%u)", "; In-game message format template");
+		// Bulk Stat Allocation
+		ini.SetBoolValue("BulkStat", "ENABLED", true, "; Enable bulk stat allocation (0x7E10 opcode)");
 		// App
 		ini.SetBoolValue("App", "DEBUG_CONSOLE", true, "; Attach debug console");
 		// Save it
@@ -178,6 +182,21 @@ void AppManager::InitMobKillStats()
 	else
 	{
 		LogMobKill("[MobKillStats] DISABLED");
+	}
+}
+void AppManager::InitBulkStat()
+{
+	CSimpleIniA ini;
+	ini.LoadFile("vSRO-GameServer.ini");
+
+	m_BulkStat_Enabled = ini.GetBoolValue("BulkStat", "ENABLED", true);
+	if (m_BulkStat_Enabled)
+	{
+		LogMobKill("[BulkStat] ENABLED | Opcode 0x7E10 Wire Protocol Active");
+	}
+	else
+	{
+		LogMobKill("[BulkStat] DISABLED");
 	}
 }
 void AppManager::InitDebugConsole()
@@ -246,9 +265,83 @@ void __declspec(naked) Hook_OnCharDie()
 	}
 }
 
+static void WritePacketData(void* packet, const void* data, size_t dataSize)
+{
+	__asm
+	{
+		push esi
+		push edi
+		mov ecx, packet
+		mov eax, dataSize
+		push data
+		mov edx, 0x00404090
+		call edx
+		pop edi
+		pop esi
+	}
+}
+
+void __declspec(naked) Hook_OnPlayerPacketReceive()
+{
+	__asm
+	{
+		pushad
+		pushfd
+
+		// At entry of 0x0050EEE0 (CGObjPC::OnPacketReceive):
+		// ecx = pPlayer (this)
+		// [esp + 4] = pPacket
+		// After pushad (32 bytes) + pushfd (4 bytes) = 36 bytes:
+		// [esp + 36 + 4] = [esp + 40] = pPacket
+		// [esp + 28] = saved ecx (pPlayer)
+		mov edx, [esp + 40]
+		mov ecx, [esp + 28]
+		push edx            // arg2: pPacket
+		push ecx            // arg1: pPlayer
+		call AppManager::OnPlayerPacketReceiveBridge
+
+		test al, al
+		jnz _handled
+
+		popfd
+		popad
+
+		// Original 5 bytes overwritten at 0x0050EEE0:
+		// 56               push esi
+		// 8B 74 24 08      mov esi, dword ptr [esp+8]
+		push esi
+		mov esi, [esp + 8]
+
+		// Jump back to 0x0050EEE5
+		mov edx, 0x0050EEE5
+		jmp edx
+
+	_handled:
+		popfd
+		popad
+		// __thiscall callee pop 1 parameter (pPacket = 4 bytes)
+		ret 4
+	}
+}
+
 void AppManager::InitHooks()
 {
 	std::cout << " * Initializing hooks..." << std::endl;
+
+	// Bulk Stat Allocation Hook (CGObjPC::OnPacketReceive 0x0050EEE0)
+	if (m_BulkStat_Enabled)
+	{
+		printf(" - HOOK_BULK_STAT (CGObjPC::OnPacketReceive 0x0050EEE0)\r\n");
+		bool hookPacket = placeHook(0x0050EEE0, (int)Hook_OnPlayerPacketReceive);
+		if (hookPacket)
+		{
+			LogMobKill("[BulkStat] CGObjPC::OnPacketReceive Hook Registered Successfully! (0x0050EEE0)");
+		}
+		else
+		{
+			LogMobKill("[BulkStat ERROR] Failed to register hook at 0x0050EEE0!");
+		}
+	}
 
 	// Mob Kill Stats Hooks
 	if (m_MobKillStats_Enabled)
@@ -313,6 +406,131 @@ void __stdcall AppManager::OnEntityKilled(void* pAttacker, void* pDeadEntity)
 void __stdcall AppManager::OnUniversalKillRewardBridge(void* pAttacker, void* pVictim)
 {
 	ProcessMobKillReward(pAttacker, pVictim);
+}
+
+bool __stdcall AppManager::OnPlayerPacketReceiveBridge(void* pPlayer, void* pPacket)
+{
+	if (!pPlayer || !pPacket)
+		return false;
+
+	__try
+	{
+		// In Silkroad, [pPacket + 0x1050] is pointer to opcode (2 bytes)
+		uint16_t* pOpcode = *(uint16_t**)((char*)pPacket + 0x1050);
+		if (!pOpcode)
+			return false;
+
+		if (*pOpcode == 0x7E10)
+		{
+			// [pPacket + 0x1034] points to raw packet buffer starting at Length (2B) + Opcode (2B) + Security (2B) + Payload
+			char* pBuffer = *(char**)((char*)pPacket + 0x1034);
+			if (!pBuffer)
+				return false;
+
+			// Payload is at offset 6: 0 = STR, 1 = INT
+			uint8_t statType = (uint8_t)pBuffer[6];
+			Handle_BulkStatIncrease((CGObjPC*)pPlayer, statType != 0);
+			return true; // handled, suppress further Joymax processing
+		}
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		LogMobKill("[BulkStat ERROR] Exception caught in OnPlayerPacketReceiveBridge");
+	}
+
+	return false;
+}
+
+void AppManager::Handle_BulkStatIncrease(CGObjPC* pPlayer, bool isInt)
+{
+	if (!pPlayer) return;
+
+	CInstancePC* pInstance = pPlayer->GetInstance();
+	if (!pInstance) return;
+
+	uint16_t freePoints = pInstance->RemainStatPoint;
+	if (freePoints == 0)
+	{
+		pPlayer->SendChatMessage(6, "[Server]", "Dagitilacak serbest stat puaniniz bulunmamaktadir.");
+		return;
+	}
+
+	uint16_t currentStat = isInt ? pInstance->Intelect : pInstance->Strength;
+	if ((uint32_t)currentStat + freePoints > 32000)
+	{
+		pPlayer->SendChatMessage(6, "[Server]", "Hata: Stat limiti (32000) asilamaz!");
+		return;
+	}
+
+	uint32_t strPoints = isInt ? 0 : freePoints;
+	uint32_t intPoints = isInt ? freePoints : 0;
+
+	// Call Joymax native stat allocator at 0x00511470
+	// Handles: deduction from RemainStatPoint, dirty flag 0x10,
+	//          addition to Strength/Intelect, dirty flag 0x04,
+	//          stat recalculation (HP, MP, Attack, Defense)
+	uint32_t retVal = 0;
+	void* pObj = pPlayer;
+	__asm
+	{
+		push ebx
+		push esi
+		push edi
+
+		push intPoints
+		mov eax, strPoints
+		mov ebx, pObj
+		mov edx, 0x00511470
+		call edx
+
+		mov retVal, eax
+		pop edi
+		pop esi
+		pop ebx
+	}
+
+	if (retVal == 1)
+	{
+		// 1. Dispatch 0x303D stat update packet to client (syncs STR, INT, Max HP, Max MP)
+		pPlayer->SendStatUpdate();
+
+		// 2. Dispatch 0x304E packet to client (type 3 = RemainStatPoint update)
+		pPlayer->SendStuffUpdate(3, false);
+
+		// 3. Send 0xBE10 response packet (1 byte: 0x01 = success)
+		void* pResp = CallVirtual<void*(__thiscall*)(CGObjPC*, uint16_t)>(pPlayer, 158)(pPlayer, 0xBE10);
+		if (pResp)
+		{
+			uint8_t result = 1;
+			WritePacketData(pResp, &result, sizeof(uint8_t));
+			CallVirtual<void(__thiscall*)(CGObjPC*, void*)>(pPlayer, 159)(pPlayer, pResp);
+		}
+
+		// 4. In-game notice to player
+		char notice[128];
+		sprintf_s(notice, "Tebrikler! %u stat puaninizin tumu %s'ye verildi!", freePoints, isInt ? "INT" : "STR");
+		pPlayer->SendChatMessage(6, "[Server]", notice);
+
+		// 5. Server console & file log
+		LogMobKill("[BulkStat] SUCCESS | Char: '%s' (ID: %u) allocated %u points to %s -> Total %s: %u | Remaining: %u",
+			pInstance->CharName16, pInstance->CharID, freePoints,
+			isInt ? "INT" : "STR", isInt ? "INT" : "STR",
+			isInt ? pInstance->Intelect : pInstance->Strength,
+			pInstance->RemainStatPoint);
+	}
+	else
+	{
+		void* pResp = CallVirtual<void*(__thiscall*)(CGObjPC*, uint16_t)>(pPlayer, 158)(pPlayer, 0xBE10);
+		if (pResp)
+		{
+			uint8_t result = 2; // fail
+			WritePacketData(pResp, &result, sizeof(uint8_t));
+			CallVirtual<void(__thiscall*)(CGObjPC*, void*)>(pPlayer, 159)(pPlayer, pResp);
+		}
+		pPlayer->SendChatMessage(6, "[Server]", "Hata: Stat puanlari dagitilamadi!");
+		LogMobKill("[BulkStat FAIL] Char: '%s' (ID: %u) attempted to allocate %u points to %s",
+			pInstance->CharName16, pInstance->CharID, freePoints, isInt ? "INT" : "STR");
+	}
 }
 
 void __stdcall AppManager::OnEntityKilledParty(void* pAttacker, void* pDeadEntity)

@@ -7,6 +7,8 @@
 #include <unordered_map>
 #include <mutex>
 
+class CGObjPC;
+
 struct PlayerStatProgress {
 	uint32_t currentKills;
 	uint32_t bonusGranted;
@@ -78,6 +80,10 @@ public: // Public Methods
 	static void ProcessMobKillReward(void* pAttacker, void* pDeadEntity);
 	// Thread-safe logger writing to console and vSRO-MobKillStats.log
 	static void LogMobKill(const char* format, ...);
+	// Bulk Stat Allocation (0x7E10 opcode)
+	static bool m_BulkStat_Enabled;
+	static bool __stdcall OnPlayerPacketReceiveBridge(void* pPlayer, void* pPacket);
+	static void Handle_BulkStatIncrease(CGObjPC* pPlayer, bool isInt);
 private: // Private Helpers
 	// Internal worker for mob kill reward logic (called under SEH guard)
 	static void ProcessMobKillRewardInternal(void* pAttacker, void* pDeadEntity);
@@ -91,6 +97,8 @@ private: // Private Helpers
 	static void InitPatchValues();
 	// Initialize Mob Kill Stats configuration
 	static void InitMobKillStats();
+	// Initialize Bulk Stat configuration
+	static void InitBulkStat();
 	// Initialize all hooks required
 	static void InitHooks();
 	// Event handler for unique spawn
