@@ -319,6 +319,7 @@ void __declspec(naked) Hook_OnPlayerPacketReceive()
 	_handled:
 		popfd
 		popad
+		mov eax, 1
 		// __thiscall callee pop 1 parameter (pPacket = 4 bytes)
 		ret 4
 	}
@@ -427,8 +428,16 @@ bool __stdcall AppManager::OnPlayerPacketReceiveBridge(void* pPlayer, void* pPac
 			if (!pBuffer)
 				return false;
 
+			// Defensive checks: Length must be at least 1 byte payload, statType must be 0 (STR) or 1 (INT)
+			uint16_t payloadLen = *(uint16_t*)pBuffer;
+			if (payloadLen < 1)
+				return false;
+
 			// Payload is at offset 6: 0 = STR, 1 = INT
 			uint8_t statType = (uint8_t)pBuffer[6];
+			if (statType > 1)
+				return false;
+
 			Handle_BulkStatIncrease((CGObjPC*)pPlayer, statType != 0);
 			return true; // handled, suppress further Joymax processing
 		}
@@ -497,21 +506,12 @@ void AppManager::Handle_BulkStatIncrease(CGObjPC* pPlayer, bool isInt)
 		// 2. Dispatch 0x304E packet to client (type 3 = RemainStatPoint update)
 		pPlayer->SendStuffUpdate(3, false);
 
-		// 3. Send 0xBE10 response packet (1 byte: 0x01 = success)
-		void* pResp = CallVirtual<void*(__thiscall*)(CGObjPC*, uint16_t)>(pPlayer, 158)(pPlayer, 0xBE10);
-		if (pResp)
-		{
-			uint8_t result = 1;
-			WritePacketData(pResp, &result, sizeof(uint8_t));
-			CallVirtual<void(__thiscall*)(CGObjPC*, void*)>(pPlayer, 159)(pPlayer, pResp);
-		}
-
-		// 4. In-game notice to player
+		// 3. In-game notice to player
 		char notice[128];
 		sprintf_s(notice, "Tebrikler! %u stat puaninizin tumu %s'ye verildi!", freePoints, isInt ? "INT" : "STR");
 		pPlayer->SendChatMessage(6, "[Server]", notice);
 
-		// 5. Server console & file log
+		// 4. Server console & file log
 		LogMobKill("[BulkStat] SUCCESS | Char: '%s' (ID: %u) allocated %u points to %s -> Total %s: %u | Remaining: %u",
 			pInstance->CharName16, pInstance->CharID, freePoints,
 			isInt ? "INT" : "STR", isInt ? "INT" : "STR",
@@ -520,13 +520,6 @@ void AppManager::Handle_BulkStatIncrease(CGObjPC* pPlayer, bool isInt)
 	}
 	else
 	{
-		void* pResp = CallVirtual<void*(__thiscall*)(CGObjPC*, uint16_t)>(pPlayer, 158)(pPlayer, 0xBE10);
-		if (pResp)
-		{
-			uint8_t result = 2; // fail
-			WritePacketData(pResp, &result, sizeof(uint8_t));
-			CallVirtual<void(__thiscall*)(CGObjPC*, void*)>(pPlayer, 159)(pPlayer, pResp);
-		}
 		pPlayer->SendChatMessage(6, "[Server]", "Hata: Stat puanlari dagitilamadi!");
 		LogMobKill("[BulkStat FAIL] Char: '%s' (ID: %u) attempted to allocate %u points to %s",
 			pInstance->CharName16, pInstance->CharID, freePoints, isInt ? "INT" : "STR");
