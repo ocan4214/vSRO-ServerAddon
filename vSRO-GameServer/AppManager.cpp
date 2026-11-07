@@ -486,14 +486,16 @@ void AppManager::Handle_BulkStatIncrease(CGObjPC* pPlayer, uint8_t statType)
 	uint16_t freePoints = pInstance->RemainStatPoint;
 	if (freePoints == 0)
 	{
-		pPlayer->SendChatMessage(6, "[Server]", "Dagitilacak serbest stat puaniniz bulunmamaktadir.");
+		LogMobKill("[BulkStat] Char: '%s' (ID: %u) requested bulk stat with 0 free points",
+			pInstance->CharName16, pInstance->CharID);
 		return;
 	}
 
 	uint16_t currentStat = isInt ? pInstance->Intelect : pInstance->Strength;
 	if (currentStat >= 32000)
 	{
-		pPlayer->SendChatMessage(6, "[Server]", "Hata: Stat limiti (32000) zaten dolu!");
+		LogMobKill("[BulkStat] Char: '%s' (ID: %u) stat limit already reached (32000)",
+			pInstance->CharName16, pInstance->CharID);
 		return;
 	}
 
