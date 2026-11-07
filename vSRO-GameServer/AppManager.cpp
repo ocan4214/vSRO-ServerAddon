@@ -495,14 +495,21 @@ void AppManager::Handle_BulkStatIncrease(CGObjPC* pPlayer, bool isInt)
 	}
 
 	uint16_t currentStat = isInt ? pInstance->Intelect : pInstance->Strength;
-	if ((uint32_t)currentStat + freePoints > 32000)
+	if (currentStat >= 32000)
 	{
-		pPlayer->SendChatMessage(6, "[Server]", "Hata: Stat limiti (32000) asilamaz!");
+		pPlayer->SendChatMessage(6, "[Server]", "Hata: Stat limiti (32000) zaten dolu!");
 		return;
 	}
 
-	uint32_t strPoints = isInt ? 0 : freePoints;
-	uint32_t intPoints = isInt ? freePoints : 0;
+	// Clamp to 32000 limit so excess free points are safely retained
+	uint16_t pointsToAlloc = freePoints;
+	if ((uint32_t)currentStat + pointsToAlloc > 32000)
+	{
+		pointsToAlloc = static_cast<uint16_t>(32000 - currentStat);
+	}
+
+	uint32_t strPoints = isInt ? 0 : pointsToAlloc;
+	uint32_t intPoints = isInt ? pointsToAlloc : 0;
 
 	// Call Joymax native stat allocator at 0x00511470
 	// Handles: deduction from RemainStatPoint, dirty flag 0x10,
@@ -538,12 +545,21 @@ void AppManager::Handle_BulkStatIncrease(CGObjPC* pPlayer, bool isInt)
 
 		// 3. In-game notice to player
 		char notice[128];
-		sprintf_s(notice, "Tebrikler! %u stat puaninizin tumu %s'ye verildi!", freePoints, isInt ? "INT" : "STR");
+		if (pointsToAlloc < freePoints)
+		{
+			sprintf_s(notice, "Tebrikler! %s 32000 limitine ulasti (+%u verildi, kalan: %u).",
+				isInt ? "INT" : "STR", pointsToAlloc, pInstance->RemainStatPoint);
+		}
+		else
+		{
+			sprintf_s(notice, "Tebrikler! %u stat puaninizin tumu %s'ye verildi!",
+				pointsToAlloc, isInt ? "INT" : "STR");
+		}
 		pPlayer->SendChatMessage(6, "[Server]", notice);
 
 		// 4. Server console & file log
 		LogMobKill("[BulkStat] SUCCESS | Char: '%s' (ID: %u) allocated %u points to %s -> Total %s: %u | Remaining: %u",
-			pInstance->CharName16, pInstance->CharID, freePoints,
+			pInstance->CharName16, pInstance->CharID, pointsToAlloc,
 			isInt ? "INT" : "STR", isInt ? "INT" : "STR",
 			isInt ? pInstance->Intelect : pInstance->Strength,
 			pInstance->RemainStatPoint);
