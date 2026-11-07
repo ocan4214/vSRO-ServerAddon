@@ -423,23 +423,53 @@ bool __stdcall AppManager::OnPlayerPacketReceiveBridge(void* pPlayer, void* pPac
 
 		if (*pOpcode == 0x7E10)
 		{
-			// [pPacket + 0x1034] points to raw packet buffer starting at Length (2B) + Opcode (2B) + Security (2B) + Payload
+			// [pPacket + 0x1034] points to packet buffer
 			char* pBuffer = *(char**)((char*)pPacket + 0x1034);
 			if (!pBuffer)
 				return false;
 
-			// Defensive checks: Length must be at least 1 byte payload, statType must be 0 (STR) or 1 (INT)
-			uint16_t payloadLen = *(uint16_t*)pBuffer;
-			if (payloadLen < 1)
-				return false;
+			// [pPacket + 0x103c] = read cursor, [pPacket + 0x103e] = buffer end
+			uint16_t cursor = *(uint16_t*)((char*)pPacket + 0x103c);
+			uint16_t end = *(uint16_t*)((char*)pPacket + 0x103e);
 
-			// Payload is at offset 6: 0 = STR, 1 = INT
-			uint8_t statType = (uint8_t)pBuffer[6];
-			if (statType > 1)
+			// [pPacket + 0x1054] = pointer to payload size
+			uint16_t* pDataSize = *(uint16_t**)((char*)pPacket + 0x1054);
+			uint16_t payloadLen = pDataSize ? (*pDataSize & 0x7FFF) : (end > cursor ? (end - cursor) : 0);
+
+			if (payloadLen < 1 && (end <= cursor))
+			{
+				LogMobKill("[BulkStat] 0x7E10 rejected: empty payload (payloadLen=%u, cursor=%u, end=%u)", payloadLen, cursor, end);
 				return false;
+			}
+
+			// Read statType safely using cursor offset, with fallbacks for both stripped payload and wire format
+			uint8_t statType = 0xFF;
+			if (cursor < end)
+			{
+				statType = (uint8_t)pBuffer[cursor];
+			}
+
+			// Fallback: if cursor is not at valid statType, inspect direct offsets
+			if (statType > 1)
+			{
+				if ((uint8_t)pBuffer[0] <= 1)
+					statType = (uint8_t)pBuffer[0];
+				else if ((uint8_t)pBuffer[6] <= 1)
+					statType = (uint8_t)pBuffer[6];
+			}
+
+			if (statType > 1)
+			{
+				LogMobKill("[BulkStat ERROR] 0x7E10 invalid statType: %u (cursor=%u, end=%u, dataSize=%u, b[0]=%u, b[6]=%u)",
+					statType, cursor, end, payloadLen, (uint8_t)pBuffer[0], (uint8_t)pBuffer[6]);
+				return false;
+			}
+
+			LogMobKill("[BulkStat] 0x7E10 received from player! statType=%u (%s) | cursor=%u, end=%u, payloadLen=%u",
+				statType, statType == 1 ? "INT" : "STR", cursor, end, payloadLen);
 
 			Handle_BulkStatIncrease((CGObjPC*)pPlayer, statType != 0);
-			return true; // handled, suppress further Joymax processing
+			return true; // handled, suppress Joymax unhandled packet disconnect (0x004B0DD0)
 		}
 	}
 	__except (EXCEPTION_EXECUTE_HANDLER)
