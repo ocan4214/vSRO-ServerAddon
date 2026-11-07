@@ -186,18 +186,8 @@ void AppManager::InitMobKillStats()
 }
 void AppManager::InitBulkStat()
 {
-	CSimpleIniA ini;
-	ini.LoadFile("vSRO-GameServer.ini");
-
-	m_BulkStat_Enabled = ini.GetBoolValue("BulkStat", "ENABLED", true);
-	if (m_BulkStat_Enabled)
-	{
-		LogMobKill("[BulkStat] ENABLED | Custom Opcode 0x7710 Wire Protocol Active");
-	}
-	else
-	{
-		LogMobKill("[BulkStat] DISABLED");
-	}
+	BulkStatManager::Init();
+	m_BulkStat_Enabled = BulkStatManager::IsEnabled();
 }
 void AppManager::InitDebugConsole()
 {
@@ -421,46 +411,10 @@ bool __stdcall AppManager::OnPlayerPacketReceiveBridge(void* pPlayer, void* pPac
 		if (!pOpcode)
 			return false;
 
-		char* pBuffer = *reinterpret_cast<char**>(reinterpret_cast<char*>(pPacket) + 0x1034);
-		uint16_t cursor = *reinterpret_cast<uint16_t*>(reinterpret_cast<char*>(pPacket) + 0x103c);
-		uint16_t end = *reinterpret_cast<uint16_t*>(reinterpret_cast<char*>(pPacket) + 0x103e);
-		uint16_t* pDataSize = *reinterpret_cast<uint16_t**>(reinterpret_cast<char*>(pPacket) + 0x1054);
-		uint16_t payloadLen = pDataSize ? (*pDataSize & 0x7FFF) : (end > cursor ? (end - cursor) : 0);
-
-	switch (*pOpcode)
+		switch (*pOpcode)
 		{
 		case OPCODE_CS_BULK_STAT_REQ: // 0x7710
-		{
-			if (!pBuffer || (payloadLen < 1 && end <= cursor))
-			{
-				LogMobKill("[BulkStat] 0x7710 rejected: empty payload (payloadLen=%u, cursor=%u, end=%u)", payloadLen, cursor, end);
-				return false;
-			}
-
-			uint8_t statType = 0xFF;
-			if (cursor < end)
-			{
-				statType = static_cast<uint8_t>(pBuffer[cursor]);
-				*reinterpret_cast<uint16_t*>(reinterpret_cast<char*>(pPacket) + 0x103c) = cursor + 1;
-			}
-			else if (pBuffer && payloadLen >= 1)
-			{
-				statType = static_cast<uint8_t>(pBuffer[0]);
-			}
-
-			if (statType > 1)
-			{
-				LogMobKill("[BulkStat ERROR] 0x7710 invalid statType: %u (cursor=%u, end=%u, payloadLen=%u)",
-					statType, cursor, end, payloadLen);
-				return false;
-			}
-
-			LogMobKill("[BulkStat] 0x7710 received from player! statType=%u (%s) | cursor=%u, end=%u, payloadLen=%u",
-				statType, statType == BULK_STAT_TYPE_INT ? "INT" : "STR", cursor, end, payloadLen);
-
-			Handle_BulkStatIncrease(static_cast<CGObjPC*>(pPlayer), statType);
-			return true; // handled, suppress Joymax unhandled packet disconnect (0x004B0DD0)
-		}
+			return BulkStatManager::HandlePacket(pPlayer, pPacket);
 
 		default:
 			break;
@@ -468,91 +422,10 @@ bool __stdcall AppManager::OnPlayerPacketReceiveBridge(void* pPlayer, void* pPac
 	}
 	__except (EXCEPTION_EXECUTE_HANDLER)
 	{
-		LogMobKill("[BulkStat ERROR] Exception caught in OnPlayerPacketReceiveBridge");
+		LogMobKill("[PacketBridge ERROR] Exception caught in OnPlayerPacketReceiveBridge");
 	}
 
 	return false;
-}
-
-void AppManager::Handle_BulkStatIncrease(CGObjPC* pPlayer, uint8_t statType)
-{
-	if (!pPlayer) return;
-
-	bool isInt = (statType == BULK_STAT_TYPE_INT);
-
-	CInstancePC* pInstance = pPlayer->GetInstance();
-	if (!pInstance) return;
-
-	uint16_t freePoints = pInstance->RemainStatPoint;
-	if (freePoints == 0)
-	{
-		LogMobKill("[BulkStat] Char: '%s' (ID: %u) requested bulk stat with 0 free points",
-			pInstance->CharName16, pInstance->CharID);
-		return;
-	}
-
-	uint16_t currentStat = isInt ? pInstance->Intelect : pInstance->Strength;
-	if (currentStat >= 32000)
-	{
-		LogMobKill("[BulkStat] Char: '%s' (ID: %u) stat limit already reached (32000)",
-			pInstance->CharName16, pInstance->CharID);
-		return;
-	}
-
-	// Clamp to 32000 limit so excess free points are safely retained
-	uint16_t pointsToAlloc = freePoints;
-	if ((uint32_t)currentStat + pointsToAlloc > 32000)
-	{
-		pointsToAlloc = static_cast<uint16_t>(32000 - currentStat);
-	}
-
-	uint32_t strPoints = isInt ? 0 : pointsToAlloc;
-	uint32_t intPoints = isInt ? pointsToAlloc : 0;
-
-	// Call Joymax native stat allocator at 0x00511470
-	// Handles: deduction from RemainStatPoint, dirty flag 0x10,
-	//          addition to Strength/Intelect, dirty flag 0x04,
-	//          stat recalculation (HP, MP, Attack, Defense)
-	uint32_t retVal = 0;
-	void* pObj = pPlayer;
-	__asm
-	{
-		push ebx
-		push esi
-		push edi
-
-		push intPoints
-		mov eax, strPoints
-		mov ebx, pObj
-		mov edx, 0x00511470
-		call edx
-
-		mov retVal, eax
-		pop edi
-		pop esi
-		pop ebx
-	}
-
-	if (retVal == 1)
-	{
-		// 1. Dispatch 0x303D stat update packet to client (syncs STR, INT, Max HP, Max MP)
-		pPlayer->SendStatUpdate();
-
-		// 2. Dispatch 0x304E packet to client (type 3 = RemainStatPoint update)
-		pPlayer->SendStuffUpdate(3, false);
-
-		// 3. Server console & file log (in-game chat notice removed per UX request)
-		LogMobKill("[BulkStat SUCCESS] Char: '%s' (ID: %u) |Opcode 0x7710| allocated %u points to %s -> Total %s: %u | Remaining: %u",
-			pInstance->CharName16, pInstance->CharID, pointsToAlloc,
-			isInt ? "INT" : "STR", isInt ? "INT" : "STR",
-			isInt ? pInstance->Intelect : pInstance->Strength,
-			pInstance->RemainStatPoint);
-	}
-	else
-	{
-		LogMobKill("[BulkStat FAIL] Char: '%s' (ID: %u) |Opcode 0x7710| attempted to allocate %u points to %s",
-			pInstance->CharName16, pInstance->CharID, freePoints, isInt ? "INT" : "STR");
-	}
 }
 
 void __stdcall AppManager::OnEntityKilledParty(void* pAttacker, void* pDeadEntity)
