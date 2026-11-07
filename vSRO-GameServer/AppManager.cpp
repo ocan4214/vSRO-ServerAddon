@@ -539,21 +539,7 @@ void AppManager::Handle_BulkStatIncrease(CGObjPC* pPlayer, uint8_t statType)
 		// 2. Dispatch 0x304E packet to client (type 3 = RemainStatPoint update)
 		pPlayer->SendStuffUpdate(3, false);
 
-		// 3. In-game notice to player
-		char notice[128];
-		if (pointsToAlloc < freePoints)
-		{
-			sprintf_s(notice, "Tebrikler! %s 32000 limitine ulasti (+%u verildi, kalan: %u).",
-				isInt ? "INT" : "STR", pointsToAlloc, pInstance->RemainStatPoint);
-		}
-		else
-		{
-			sprintf_s(notice, "Tebrikler! %u stat puaninizin tumu %s'ye verildi!",
-				pointsToAlloc, isInt ? "INT" : "STR");
-		}
-		pPlayer->SendChatMessage(6, "[Server]", notice);
-
-		// 4. Server console & file log
+		// 3. Server console & file log (in-game chat notice removed per UX request)
 		LogMobKill("[BulkStat SUCCESS] Char: '%s' (ID: %u) |Opcode 0x7710| allocated %u points to %s -> Total %s: %u | Remaining: %u",
 			pInstance->CharName16, pInstance->CharID, pointsToAlloc,
 			isInt ? "INT" : "STR", isInt ? "INT" : "STR",
@@ -562,7 +548,6 @@ void AppManager::Handle_BulkStatIncrease(CGObjPC* pPlayer, uint8_t statType)
 	}
 	else
 	{
-		pPlayer->SendChatMessage(6, "[Server]", "Hata: Stat puanlari dagitilamadi!");
 		LogMobKill("[BulkStat FAIL] Char: '%s' (ID: %u) |Opcode 0x7710| attempted to allocate %u points to %s",
 			pInstance->CharName16, pInstance->CharID, freePoints, isInt ? "INT" : "STR");
 	}
