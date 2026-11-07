@@ -421,6 +421,35 @@ bool __stdcall AppManager::OnPlayerPacketReceiveBridge(void* pPlayer, void* pPac
 		if (!pOpcode)
 			return false;
 
+		// Bulk stat over the standard stat opcodes. AgentServer silently drops (and then
+		// disconnects) unknown opcodes such as 0x7E10, so the client reuses 0x7050 (STR+) /
+		// 0x7051 (INT+), which Agent already routes here, and appends the magic bytes
+		// B5 7E. A vanilla 0x7050/0x7051 has an empty payload and falls through to Joymax.
+		if (*pOpcode == 0x7050 || *pOpcode == 0x7051)
+		{
+			char* pBuf = *(char**)((char*)pPacket + 0x1034);
+			if (!pBuf)
+				return false;
+			uint16_t cur = *(uint16_t*)((char*)pPacket + 0x103c);
+			uint16_t* pSize = *(uint16_t**)((char*)pPacket + 0x1054);
+			uint16_t len = pSize ? (*pSize & 0x7FFF) : 0;
+			if (len < 2)
+				return false; // vanilla single-point request
+
+			if ((uint8_t)pBuf[cur] != 0xB5 || (uint8_t)pBuf[cur + 1] != 0x7E)
+			{
+				LogMobKill("[BulkStat] 0x%04X with unexpected payload (len=%u, b0=%02X, b1=%02X) -> passed to Joymax",
+					*pOpcode, len, (uint8_t)pBuf[cur], (uint8_t)pBuf[cur + 1]);
+				return false;
+			}
+
+			bool isInt = (*pOpcode == 0x7051);
+			LogMobKill("[BulkStat] bulk request via 0x%04X (%s) | cursor=%u, len=%u",
+				*pOpcode, isInt ? "INT" : "STR", cur, len);
+			Handle_BulkStatIncrease((CGObjPC*)pPlayer, isInt);
+			return true; // handled, do not run the single-point Joymax handler
+		}
+
 		if (*pOpcode == 0x7E10)
 		{
 			// [pPacket + 0x1034] points to packet buffer
