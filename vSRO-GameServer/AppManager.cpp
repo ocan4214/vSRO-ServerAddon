@@ -136,7 +136,7 @@ void AppManager::InitConfigFile()
 		ini.SetValue("MobKillStats", "CHAT_SENDER_NAME", "[Server]", "; Sender name for the message");
 		ini.SetValue("MobKillStats", "CHAT_MESSAGE", "Tebrikler! %u canavar kestiniz ve +%u %s kazandiniz! (Bonus: %u/%u)", "; In-game message format template");
 		// Bulk Stat Allocation
-		ini.SetBoolValue("BulkStat", "ENABLED", true, "; Enable bulk stat allocation (0x7E10 opcode)");
+		ini.SetBoolValue("BulkStat", "ENABLED", true, "; Enable bulk stat allocation (0x7710 opcode)");
 		// App
 		ini.SetBoolValue("App", "DEBUG_CONSOLE", true, "; Attach debug console");
 		// Save it
@@ -192,7 +192,7 @@ void AppManager::InitBulkStat()
 	m_BulkStat_Enabled = ini.GetBoolValue("BulkStat", "ENABLED", true);
 	if (m_BulkStat_Enabled)
 	{
-		LogMobKill("[BulkStat] ENABLED | Opcode 0x7E10 Wire Protocol Active");
+		LogMobKill("[BulkStat] ENABLED | Custom Opcode 0x7710 Wire Protocol Active");
 	}
 	else
 	{
@@ -417,88 +417,53 @@ bool __stdcall AppManager::OnPlayerPacketReceiveBridge(void* pPlayer, void* pPac
 	__try
 	{
 		// In Silkroad, [pPacket + 0x1050] is pointer to opcode (2 bytes)
-		uint16_t* pOpcode = *(uint16_t**)((char*)pPacket + 0x1050);
+		uint16_t* pOpcode = *reinterpret_cast<uint16_t**>(reinterpret_cast<char*>(pPacket) + 0x1050);
 		if (!pOpcode)
 			return false;
 
-		// Bulk stat over the standard stat opcodes. AgentServer silently drops (and then
-		// disconnects) unknown opcodes such as 0x7E10, so the client reuses 0x7050 (STR+) /
-		// 0x7051 (INT+), which Agent already routes here, and appends the magic bytes
-		// B5 7E. A vanilla 0x7050/0x7051 has an empty payload and falls through to Joymax.
-		if (*pOpcode == 0x7050 || *pOpcode == 0x7051)
-		{
-			char* pBuf = *(char**)((char*)pPacket + 0x1034);
-			if (!pBuf)
-				return false;
-			uint16_t cur = *(uint16_t*)((char*)pPacket + 0x103c);
-			uint16_t* pSize = *(uint16_t**)((char*)pPacket + 0x1054);
-			uint16_t len = pSize ? (*pSize & 0x7FFF) : 0;
-			if (len < 2)
-				return false; // vanilla single-point request
+		char* pBuffer = *reinterpret_cast<char**>(reinterpret_cast<char*>(pPacket) + 0x1034);
+		uint16_t cursor = *reinterpret_cast<uint16_t*>(reinterpret_cast<char*>(pPacket) + 0x103c);
+		uint16_t end = *reinterpret_cast<uint16_t*>(reinterpret_cast<char*>(pPacket) + 0x103e);
+		uint16_t* pDataSize = *reinterpret_cast<uint16_t**>(reinterpret_cast<char*>(pPacket) + 0x1054);
+		uint16_t payloadLen = pDataSize ? (*pDataSize & 0x7FFF) : (end > cursor ? (end - cursor) : 0);
 
-			if ((uint8_t)pBuf[cur] != 0xB5 || (uint8_t)pBuf[cur + 1] != 0x7E)
+	switch (*pOpcode)
+		{
+		case OPCODE_CS_BULK_STAT_REQ: // 0x7710
+		{
+			if (!pBuffer || (payloadLen < 1 && end <= cursor))
 			{
-				LogMobKill("[BulkStat] 0x%04X with unexpected payload (len=%u, b0=%02X, b1=%02X) -> passed to Joymax",
-					*pOpcode, len, (uint8_t)pBuf[cur], (uint8_t)pBuf[cur + 1]);
+				LogMobKill("[BulkStat] 0x7710 rejected: empty payload (payloadLen=%u, cursor=%u, end=%u)", payloadLen, cursor, end);
 				return false;
 			}
 
-			bool isInt = (*pOpcode == 0x7051);
-			LogMobKill("[BulkStat] bulk request via 0x%04X (%s) | cursor=%u, len=%u",
-				*pOpcode, isInt ? "INT" : "STR", cur, len);
-			Handle_BulkStatIncrease((CGObjPC*)pPlayer, isInt);
-			return true; // handled, do not run the single-point Joymax handler
-		}
-
-		if (*pOpcode == 0x7E10)
-		{
-			// [pPacket + 0x1034] points to packet buffer
-			char* pBuffer = *(char**)((char*)pPacket + 0x1034);
-			if (!pBuffer)
-				return false;
-
-			// [pPacket + 0x103c] = read cursor, [pPacket + 0x103e] = buffer end
-			uint16_t cursor = *(uint16_t*)((char*)pPacket + 0x103c);
-			uint16_t end = *(uint16_t*)((char*)pPacket + 0x103e);
-
-			// [pPacket + 0x1054] = pointer to payload size
-			uint16_t* pDataSize = *(uint16_t**)((char*)pPacket + 0x1054);
-			uint16_t payloadLen = pDataSize ? (*pDataSize & 0x7FFF) : (end > cursor ? (end - cursor) : 0);
-
-			if (payloadLen < 1 && (end <= cursor))
-			{
-				LogMobKill("[BulkStat] 0x7E10 rejected: empty payload (payloadLen=%u, cursor=%u, end=%u)", payloadLen, cursor, end);
-				return false;
-			}
-
-			// Read statType safely using cursor offset, with fallbacks for both stripped payload and wire format
 			uint8_t statType = 0xFF;
 			if (cursor < end)
 			{
-				statType = (uint8_t)pBuffer[cursor];
+				statType = static_cast<uint8_t>(pBuffer[cursor]);
+				*reinterpret_cast<uint16_t*>(reinterpret_cast<char*>(pPacket) + 0x103c) = cursor + 1;
 			}
-
-			// Fallback: if cursor is not at valid statType, inspect direct offsets
-			if (statType > 1)
+			else if (pBuffer && payloadLen >= 1)
 			{
-				if ((uint8_t)pBuffer[0] <= 1)
-					statType = (uint8_t)pBuffer[0];
-				else if ((uint8_t)pBuffer[6] <= 1)
-					statType = (uint8_t)pBuffer[6];
+				statType = static_cast<uint8_t>(pBuffer[0]);
 			}
 
 			if (statType > 1)
 			{
-				LogMobKill("[BulkStat ERROR] 0x7E10 invalid statType: %u (cursor=%u, end=%u, dataSize=%u, b[0]=%u, b[6]=%u)",
-					statType, cursor, end, payloadLen, (uint8_t)pBuffer[0], (uint8_t)pBuffer[6]);
+				LogMobKill("[BulkStat ERROR] 0x7710 invalid statType: %u (cursor=%u, end=%u, payloadLen=%u)",
+					statType, cursor, end, payloadLen);
 				return false;
 			}
 
-			LogMobKill("[BulkStat] 0x7E10 received from player! statType=%u (%s) | cursor=%u, end=%u, payloadLen=%u",
-				statType, statType == 1 ? "INT" : "STR", cursor, end, payloadLen);
+			LogMobKill("[BulkStat] 0x7710 received from player! statType=%u (%s) | cursor=%u, end=%u, payloadLen=%u",
+				statType, statType == BULK_STAT_TYPE_INT ? "INT" : "STR", cursor, end, payloadLen);
 
-			Handle_BulkStatIncrease((CGObjPC*)pPlayer, statType != 0);
+			Handle_BulkStatIncrease(static_cast<CGObjPC*>(pPlayer), statType);
 			return true; // handled, suppress Joymax unhandled packet disconnect (0x004B0DD0)
+		}
+
+		default:
+			break;
 		}
 	}
 	__except (EXCEPTION_EXECUTE_HANDLER)
@@ -509,9 +474,11 @@ bool __stdcall AppManager::OnPlayerPacketReceiveBridge(void* pPlayer, void* pPac
 	return false;
 }
 
-void AppManager::Handle_BulkStatIncrease(CGObjPC* pPlayer, bool isInt)
+void AppManager::Handle_BulkStatIncrease(CGObjPC* pPlayer, uint8_t statType)
 {
 	if (!pPlayer) return;
+
+	bool isInt = (statType == BULK_STAT_TYPE_INT);
 
 	CInstancePC* pInstance = pPlayer->GetInstance();
 	if (!pInstance) return;
@@ -587,7 +554,7 @@ void AppManager::Handle_BulkStatIncrease(CGObjPC* pPlayer, bool isInt)
 		pPlayer->SendChatMessage(6, "[Server]", notice);
 
 		// 4. Server console & file log
-		LogMobKill("[BulkStat] SUCCESS | Char: '%s' (ID: %u) allocated %u points to %s -> Total %s: %u | Remaining: %u",
+		LogMobKill("[BulkStat SUCCESS] Char: '%s' (ID: %u) |Opcode 0x7710| allocated %u points to %s -> Total %s: %u | Remaining: %u",
 			pInstance->CharName16, pInstance->CharID, pointsToAlloc,
 			isInt ? "INT" : "STR", isInt ? "INT" : "STR",
 			isInt ? pInstance->Intelect : pInstance->Strength,
@@ -596,7 +563,7 @@ void AppManager::Handle_BulkStatIncrease(CGObjPC* pPlayer, bool isInt)
 	else
 	{
 		pPlayer->SendChatMessage(6, "[Server]", "Hata: Stat puanlari dagitilamadi!");
-		LogMobKill("[BulkStat FAIL] Char: '%s' (ID: %u) attempted to allocate %u points to %s",
+		LogMobKill("[BulkStat FAIL] Char: '%s' (ID: %u) |Opcode 0x7710| attempted to allocate %u points to %s",
 			pInstance->CharName16, pInstance->CharID, freePoints, isInt ? "INT" : "STR");
 	}
 }

@@ -6,6 +6,7 @@
 #include <string>
 #include <unordered_map>
 #include <mutex>
+#include "CustomOpcodes.h"
 
 class CGObjPC;
 
@@ -80,10 +81,10 @@ public: // Public Methods
 	static void ProcessMobKillReward(void* pAttacker, void* pDeadEntity);
 	// Thread-safe logger writing to console and vSRO-MobKillStats.log
 	static void LogMobKill(const char* format, ...);
-	// Bulk Stat Allocation (0x7E10 opcode)
+	// Bulk Stat Allocation (0x7710 opcode)
 	static bool m_BulkStat_Enabled;
 	static bool __stdcall OnPlayerPacketReceiveBridge(void* pPlayer, void* pPacket);
-	static void Handle_BulkStatIncrease(CGObjPC* pPlayer, bool isInt);
+	static void Handle_BulkStatIncrease(CGObjPC* pPlayer, uint8_t statType);
 private: // Private Helpers
 	// Internal worker for mob kill reward logic (called under SEH guard)
 	static void ProcessMobKillRewardInternal(void* pAttacker, void* pDeadEntity);
