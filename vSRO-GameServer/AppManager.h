@@ -8,6 +8,7 @@
 #include <mutex>
 #include "CustomOpcodes.h"
 #include "BulkStatManager.h"
+#include "AutoSkillManager.h"
 
 class CGObjPC;
 

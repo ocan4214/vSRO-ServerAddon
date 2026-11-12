@@ -21,6 +21,7 @@
   <ItemGroup>
     <ClCompile Include="AppManager.cpp" />
     <ClCompile Include="BulkStatManager.cpp" />
+    <ClCompile Include="AutoSkillManager.cpp" />
     <ClCompile Include="Silkroad\CRegionManagerBody.cpp" />
     <ClCompile Include="Silkroad\Navigation\NavInfo.cpp" />
     <ClCompile Include="Silkroad\Navigation\PosInfo.cpp" />
@@ -38,6 +39,7 @@
   <ItemGroup>
     <ClInclude Include="AppManager.h" />
     <ClInclude Include="BulkStatManager.h" />
+    <ClInclude Include="AutoSkillManager.h" />
     <ClInclude Include="CustomOpcodes.h" />
     <ClInclude Include="AsmEdition.h" />
     <ClInclude Include="Silkroad\Text\GString.h" />

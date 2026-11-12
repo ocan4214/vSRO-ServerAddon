@@ -24,6 +24,7 @@ enum CustomOpcodesCS
 {
 	OPCODE_CS_BULK_STAT_REQ     = 0x7710, // Payload: uint8_t statType (0 = STR, 1 = INT)
 	OPCODE_CS_SKIN_SHOP_BUY_REQ = 0x7711, // Reserved for future skin shop
+	OPCODE_CS_AUTO_SKILL_REQ    = 0x7712, // Payload: uint8_t action (see AutoSkillAction)
 };
 
 // Server -> Client Responses / Acks (0xB700 - 0xB7FF) [Request | 0x4000]
@@ -44,4 +45,21 @@ enum BulkStatType
 {
 	BULK_STAT_TYPE_STR = 0,
 	BULK_STAT_TYPE_INT = 1,
+};
+
+// Payload of OPCODE_CS_AUTO_SKILL_REQ (0x7712)
+//   DISABLE / ENABLE: uint32_t masteryId, uint8_t flags          (server logs it)
+//   TICK:             uint8_t count, count x { uint32_t masteryId, uint8_t flags }  (count <= 16)
+// flags: AUTO_SKILL_FLAG_MASTERY | AUTO_SKILL_FLAG_SKILL
+enum AutoSkillAction
+{
+	AUTO_SKILL_ACTION_DISABLE = 0,
+	AUTO_SKILL_ACTION_ENABLE  = 1,
+	AUTO_SKILL_ACTION_TICK    = 2,
+};
+
+enum AutoSkillFlag
+{
+	AUTO_SKILL_FLAG_MASTERY = 1, // raise the mastery level
+	AUTO_SKILL_FLAG_SKILL   = 2, // raise the skills of that mastery
 };

@@ -137,6 +137,11 @@ void AppManager::InitConfigFile()
 		ini.SetValue("MobKillStats", "CHAT_MESSAGE", "Tebrikler! %u canavar kestiniz ve +%u %s kazandiniz! (Bonus: %u/%u)", "; In-game message format template");
 		// Bulk Stat Allocation
 		ini.SetBoolValue("BulkStat", "ENABLED", true, "; Enable bulk stat allocation (0x7710 opcode)");
+		// Auto Skill / Mastery Up
+		ini.SetBoolValue("AutoSkillUp", "ENABLED", true, "; Enable automatic mastery/skill level-up (0x7712 opcode)");
+		ini.SetLongValue("AutoSkillUp", "SAFE_SECONDS", 5, "; Raise only after this many seconds without HP loss");
+		ini.SetLongValue("AutoSkillUp", "MAX_LEARN_PER_TICK", 10, "; Max levels raised per second per player");
+		ini.SetBoolValue("AutoSkillUp", "CHAT_NOTICE", true, "; Tell the player in chat what was raised");
 		// App
 		ini.SetBoolValue("App", "DEBUG_CONSOLE", true, "; Attach debug console");
 		// Save it
@@ -188,6 +193,7 @@ void AppManager::InitBulkStat()
 {
 	BulkStatManager::Init();
 	m_BulkStat_Enabled = BulkStatManager::IsEnabled();
+	AutoSkillManager::Init();
 }
 void AppManager::InitDebugConsole()
 {
@@ -320,7 +326,8 @@ void AppManager::InitHooks()
 	std::cout << " * Initializing hooks..." << std::endl;
 
 	// Bulk Stat Allocation Hook (CGObjPC::OnPacketReceive 0x0050EEE0)
-	if (m_BulkStat_Enabled)
+	// Shared by Bulk Stat (0x7710) and Auto Skill/Mastery Up (0x7712)
+	if (m_BulkStat_Enabled || AutoSkillManager::IsEnabled())
 	{
 		printf(" - HOOK_BULK_STAT (CGObjPC::OnPacketReceive 0x0050EEE0)\r\n");
 		bool hookPacket = placeHook(0x0050EEE0, (int)Hook_OnPlayerPacketReceive);
@@ -411,10 +418,16 @@ bool __stdcall AppManager::OnPlayerPacketReceiveBridge(void* pPlayer, void* pPac
 		if (!pOpcode)
 			return false;
 
+		// HP sampling for the auto skill-up "not taking damage" rule
+		AutoSkillManager::OnAnyPacket(pPlayer);
+
 		switch (*pOpcode)
 		{
 		case OPCODE_CS_BULK_STAT_REQ: // 0x7710
 			return BulkStatManager::HandlePacket(pPlayer, pPacket);
+
+		case OPCODE_CS_AUTO_SKILL_REQ: // 0x7712
+			return AutoSkillManager::HandlePacket(pPlayer, pPacket);
 
 		default:
 			break;
