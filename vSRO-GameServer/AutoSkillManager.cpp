@@ -398,6 +398,20 @@ static void HandlePacketInner(CGObjPC* pc, void* pPacket, uint32_t safeSeconds, 
 		std::lock_guard<std::mutex> lock(s_Mutex);
 
 		DWORD now = GetTickCount();
+		// Forget players who stopped sending ticks long ago (logged out, all boxes off).
+		static DWORD s_lastCleanup = 0;
+		if (now - s_lastCleanup > 60000)
+		{
+			s_lastCleanup = now;
+			for (std::map<uint32_t, PlayerState>::iterator old = s_Players.begin(); old != s_Players.end();)
+			{
+				if (now - old->second.lastTick > 600000)
+					s_Players.erase(old++);
+				else
+					++old;
+			}
+		}
+
 		std::map<uint32_t, PlayerState>::iterator it = s_Players.find(inst->CharID);
 		if (it == s_Players.end())
 		{
@@ -428,28 +442,42 @@ static void HandlePacketInner(CGObjPC* pc, void* pPacket, uint32_t safeSeconds, 
 		uint32_t masteryUps = 0, skillUps = 0;
 		char lastMastery[96] = "";
 
-		// Masteries first: skills need the mastery level.
-		for (uint8_t i = 0; i < count && budget > 0; ++i)
+		// Masteries first: skills need the mastery level. One level per mastery per round, so two ticked
+		// masteries share the SP instead of the first one taking all of it.
+		bool progress = true;
+		while (budget > 0 && progress)
 		{
-			if (!(flags[i] & FLAG_MASTERY))
-				continue;
-			int newLevel = 0;
-			while (budget > 0 && TryMasteryUp(pc, inst, ids[i], &newLevel))
+			progress = false;
+			for (uint8_t i = 0; i < count && budget > 0; ++i)
 			{
-				--budget;
-				++masteryUps;
-				sprintf_s(lastMastery, "mastery %u -> %d", ids[i], newLevel);
+				if (!(flags[i] & FLAG_MASTERY))
+					continue;
+				int newLevel = 0;
+				if (TryMasteryUp(pc, inst, ids[i], &newLevel))
+				{
+					--budget;
+					++masteryUps;
+					progress = true;
+					sprintf_s(lastMastery, "mastery %u -> %d", ids[i], newLevel);
+				}
 			}
 		}
-		for (uint8_t i = 0; i < count && budget > 0; ++i)
+		// Skills: one round per mastery in turn (each round = at most one level per skill of that mastery).
+		progress = true;
+		while (budget > 0 && progress)
 		{
-			if (!(flags[i] & FLAG_SKILL))
-				continue;
-			uint32_t got;
-			while (budget > 0 && (got = SkillPass(pc, ids[i], budget)) > 0)
+			progress = false;
+			for (uint8_t i = 0; i < count && budget > 0; ++i)
 			{
-				budget -= got;
-				skillUps += got;
+				if (!(flags[i] & FLAG_SKILL))
+					continue;
+				uint32_t got = SkillPass(pc, ids[i], budget);
+				if (got > 0)
+				{
+					budget -= got;
+					skillUps += got;
+					progress = true;
+				}
 			}
 		}
 
